@@ -2,12 +2,12 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import HTTPException, Depends, status
+from fastapi import HTTPException, Depends, Query, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from config import get_settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-bearer_scheme = HTTPBearer()
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def verify_password(plain: str, hashed: str) -> bool:
@@ -35,17 +35,53 @@ def authenticate_user(username: str, password: str) -> bool:
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> str:
     settings = get_settings()
-    credentials_exception = HTTPException(
+    ex = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Geçersiz veya süresi dolmuş token",
-        headers={"WWW-Authenticate": "Bearer"},
+        detail="Not authenticated",
     )
+    if not credentials:
+        raise ex
     try:
         payload = jwt.decode(
             credentials.credentials,
+            settings.jwt_secret,
+            algorithms=[settings.jwt_algorithm],
+        )
+        username: str = payload.get("sub")
+        if not username:
+            raise ex
+        return username
+    except JWTError:
+        raise ex
+
+
+async def get_current_user_query(
+    token: Optional[str] = Query(default=None),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+) -> str:
+    """Header veya query param ?token=... ile auth kabul eder (download linkleri için)."""
+    settings = get_settings()
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Not authenticated",
+    )
+
+    # Token'ı header veya query param'dan al
+    raw_token = None
+    if credentials:
+        raw_token = credentials.credentials
+    elif token:
+        raw_token = token
+
+    if not raw_token:
+        raise credentials_exception
+
+    try:
+        payload = jwt.decode(
+            raw_token,
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
         )

@@ -4,9 +4,10 @@ from fastapi.responses import StreamingResponse
 from typing import Optional
 from models.schemas import FileItem, UploadResponse
 from services import telegram_service, cache_service
-from services.auth_service import get_current_user
+from services.auth_service import get_current_user, get_current_user_query
 
 router = APIRouter(prefix="/api/files", tags=["files"])
+
 
 
 @router.get("", response_model=list[FileItem])
@@ -69,9 +70,9 @@ async def delete_file(
 @router.get("/download/{message_id}")
 async def download_file(
     message_id: int,
-    _: str = Depends(get_current_user),
+    _: str = Depends(get_current_user_query),
 ):
-    """Dosyayı indir (şifre çözülerek)."""
+    """Dosyayı indir — şifre çözülerek. ?token= ile de auth kabul eder."""
     file = cache_service.get_file(message_id)
     if not file:
         raise HTTPException(status_code=404, detail="Dosya bulunamadı")
@@ -88,6 +89,7 @@ async def download_file(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"İndirme hatası: {str(e)}")
+
 
 
 @router.post("/sync")

@@ -4,7 +4,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const api = axios.create({
   baseURL: API_BASE,
-  timeout: 30000,
+  timeout: 60000,
 });
 
 // JWT token'ı her isteğe ekle
@@ -77,11 +77,13 @@ export async function uploadFile(
   form.append("file", file);
   form.append("folder", folder);
   const res = await api.post("/api/files/upload", form, {
+    timeout: 10 * 60 * 1000, // 10 dakika — büyük dosyalar için
     onUploadProgress: (e) => {
       if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100));
     },
   });
-  return res.data.file;
+  // Backend { success, file, message } veya direkt FileItem dönebilir
+  return res.data.file ?? res.data;
 }
 
 export async function deleteFile(messageId: number): Promise<void> {
