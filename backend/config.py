@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     # Sunucu
     backend_port: int = 8000
     frontend_url: str = "http://localhost:3000"
-    allowed_origins: str = "http://localhost:3000"
+    allowed_origins: str = "*"
 
     class Config:
         env_file = ".env"

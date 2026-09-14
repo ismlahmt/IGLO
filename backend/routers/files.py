@@ -36,6 +36,7 @@ async def upload_file(
     file: UploadFile = File(...),
     folder: str = Form(default="/"),
     custom_name: Optional[str] = Form(default=None),
+    upload_id: Optional[str] = Form(default=None),
     _: str = Depends(get_current_user),
 ):
     """Dosya yükle — şifrele ve Telegram'a gönder."""
@@ -51,10 +52,17 @@ async def upload_file(
             filename=final_name,
             mime_type=mime_type,
             folder=folder,
+            upload_id=upload_id
         )
         return UploadResponse(success=True, file=result, message="Dosya yüklendi")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Yükleme hatası: {str(e)}")
+
+@router.get("/progress/{upload_id}")
+async def get_progress(upload_id: str, _: str = Depends(get_current_user)):
+    """Upload progress'ini döndür."""
+    from services.telegram_service import UPLOAD_PROGRESS
+    return {"progress": UPLOAD_PROGRESS.get(upload_id, 0)}
 
 
 @router.delete("/{message_id}")

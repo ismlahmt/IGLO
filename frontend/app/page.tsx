@@ -163,7 +163,6 @@ export default function HomePage() {
   const [syncing, setSyncing] = useState(false);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
-  const [showUpload, setShowUpload] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [playingFile, setPlayingFile] = useState<FileItem | null>(null);
@@ -216,7 +215,6 @@ export default function HomePage() {
     const arr = Array.from(fileList);
     const items: UploadItem[] = arr.map(f => ({ id: crypto.randomUUID(), file: f, customName: f.name, progress: 0, status: "pending" as const }));
     setUploads(prev => [...prev, ...items]);
-    setShowUpload(true);
   }
 
   async function startUploads() {
@@ -225,7 +223,13 @@ export default function HomePage() {
       const abortController = new AbortController();
       updateUpload(item.id, { status: "uploading", abortController });
       try {
-        const result = await uploadFile(item.file, folder, pct => updateUpload(item.id, { progress: pct }), item.customName, abortController);
+        let finalName = item.customName.trim();
+        const origExt = item.file.name.includes('.') ? item.file.name.split('.').pop() : null;
+        if (origExt && !finalName.includes('.')) {
+          finalName += `.${origExt}`;
+        }
+        
+        const result = await uploadFile(item.file, folder, pct => updateUpload(item.id, { progress: pct }), finalName, abortController);
         updateUpload(item.id, { status: "done", progress: 100 });
         setFiles(prev => [result, ...prev]);
         loadStats();
@@ -390,11 +394,18 @@ export default function HomePage() {
             </button>
             <button
               id="upload-btn"
-              onClick={() => setShowUpload(!showUpload)}
+              onClick={() => document.getElementById("main-file-input")?.click()}
               className="btn btn-primary"
             >
               <Upload size={14} /> Yükle
             </button>
+            <input
+              id="main-file-input"
+              type="file"
+              multiple
+              style={{ display: "none" }}
+              onChange={e => { if (e.target.files?.length) handleFilesSelected(e.target.files); e.target.value = ""; }}
+            />
           </div>
         </div>
 
@@ -436,109 +447,6 @@ export default function HomePage() {
             )}
           </AnimatePresence>
 
-          {/* Upload panel */}
-          <AnimatePresence>
-            {showUpload && (
-              <motion.div
-                initial={{ opacity: 0, height: 0, marginBottom: 0 }}
-                animate={{ opacity: 1, height: "auto", marginBottom: 20 }}
-                exit={{ opacity: 0, height: 0, marginBottom: 0 }}
-                style={{ overflow: "hidden" }}
-              >
-                <div
-                  className={`drop-zone ${dragging ? "over" : ""}`}
-                  onClick={() => document.getElementById("file-input")?.click()}
-                  style={{ marginBottom: uploads.length ? 12 : 0 }}
-                >
-                  <input
-                    id="file-input"
-                    type="file"
-                    multiple
-                    style={{ display: "none" }}
-                    onChange={e => { if (e.target.files?.length) handleFilesSelected(e.target.files); e.target.value = ""; }}
-                  />
-                  <div className="drop-icon-wrap">
-                    <Upload size={22} style={{ color: "var(--purple)" }} />
-                  </div>
-                  <p style={{ fontWeight: 700, fontSize: 14, color: "var(--text-1)", marginBottom: 4 }}>
-                    Dosyaları sürükle veya tıkla
-                  </p>
-                  <p style={{ fontSize: 12, color: "var(--text-3)" }}>
-                    Her boyutta dosya • AES-256 şifreli yükleme
-                  </p>
-                </div>
-
-                {/* Upload list */}
-                <AnimatePresence>
-                  {uploads.map(u => (
-                    <motion.div
-                      key={u.id}
-                      initial={{ opacity: 0, x: -8 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: 8 }}
-                      className="upload-item"
-                      style={{ marginBottom: 6 }}
-                    >
-                      <div style={{ flexShrink: 0 }}>
-                        {u.status === "uploading" && <Loader2 size={14} className="spin" style={{ color: "var(--purple)" }} />}
-                        {u.status === "done" && <CheckCircle size={14} style={{ color: "var(--emerald)" }} />}
-                        {u.status === "error" && <AlertCircle size={14} style={{ color: "var(--rose)" }} />}
-                        {u.status === "canceled" && <AlertCircle size={14} style={{ color: "var(--text-4)" }} />}
-                        {u.status === "pending" && <div style={{ width: 14, height: 14, borderRadius: "50%", border: "2px solid var(--border-default)" }} />}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        {u.status === "pending" ? (
-                          <input 
-                            type="text" 
-                            value={u.customName}
-                            onChange={(e) => updateUpload(u.id, { customName: e.target.value })}
-                            onClick={(e) => e.stopPropagation()}
-                            className="w-full bg-transparent border-b border-gray-600 outline-none px-1 mb-1 text-white"
-                            style={{ fontSize: 12, fontWeight: 600 }}
-                          />
-                        ) : (
-                          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-1)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {u.customName}
-                          </div>
-                        )}
-                        
-                        {u.status === "uploading" && (
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-                            <div className="upload-progress" style={{ flex: 1 }}>
-                              <div className="upload-progress-fill" style={{ width: `${u.progress}%` }} />
-                            </div>
-                            <span style={{ fontSize: 10, color: "var(--purple)", fontWeight: 600 }}>%{u.progress}</span>
-                          </div>
-                        )}
-                        {u.status === "error" && <div style={{ fontSize: 11, color: "var(--rose)", marginTop: 2 }}>{u.error}</div>}
-                        {u.status === "canceled" && <div style={{ fontSize: 11, color: "var(--text-4)", marginTop: 2 }}>İptal edildi</div>}
-                      </div>
-                      <span style={{ fontSize: 11, color: "var(--text-4)", flexShrink: 0 }}>{fmtSize(u.file.size)}</span>
-                      
-                      {(u.status === "pending" || u.status === "uploading" || u.status === "done" || u.status === "error" || u.status === "canceled") && (
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); handleCancelOrRemove(u); }} 
-                          style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-3)", flexShrink: 0 }}
-                          title={u.status === "uploading" ? "İptal et" : "Kaldır"}
-                        >
-                          <X size={13} />
-                        </button>
-                      )}
-                    </motion.div>
-                  ))}
-
-                  {uploads.some(u => u.status === "pending") && (
-                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
-                      <button onClick={startUploads} className="btn btn-primary" style={{ padding: "6px 12px", fontSize: 12 }}>
-                        <Play size={12} /> Yüklemeyi Başlat
-                      </button>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
           {/* File grid header */}
           <div className="page-heading">
             <div>
@@ -564,7 +472,7 @@ export default function HomePage() {
               <p className="empty-desc">
                 Dosyalarını yüklemek için sürükle-bırak kullan veya yükle butonuna tıkla.
               </p>
-              <button onClick={() => setShowUpload(true)} className="btn btn-primary">
+              <button onClick={() => document.getElementById("main-file-input")?.click()} className="btn btn-primary">
                 <Upload size={14} /> İlk Dosyayı Yükle
               </button>
             </div>
@@ -583,6 +491,130 @@ export default function HomePage() {
           )}
         </div>
       </main>
+
+      {/* Upload Manager (Floating Bottom Right) */}
+      <AnimatePresence>
+        {uploads.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 50, scale: 0.9 }}
+            style={{
+              position: "fixed",
+              bottom: 24,
+              right: 24,
+              width: 360,
+              maxHeight: 500,
+              background: "var(--bg-1)",
+              border: "1px solid var(--border-default)",
+              borderRadius: 16,
+              boxShadow: "0 10px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05)",
+              zIndex: 50,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden"
+            }}
+          >
+            {/* Header */}
+            <div style={{ padding: "12px 16px", background: "var(--bg-2)", borderBottom: "1px solid var(--border-subtle)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)" }}>
+                Yüklemeler ({uploads.filter(u => u.status === 'done').length}/{uploads.length})
+              </div>
+              <button onClick={() => setUploads(uploads.filter(u => u.status !== 'done' && u.status !== 'canceled'))} style={{ background: "none", border: "none", color: "var(--text-3)", cursor: "pointer", fontSize: 12 }}>
+                Temizle
+              </button>
+            </div>
+            
+            {/* List */}
+            <div style={{ padding: "8px", overflowY: "auto", flex: 1, maxHeight: 380 }}>
+              <AnimatePresence>
+                {uploads.map(u => (
+                  <motion.div
+                    key={u.id}
+                    layout
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    style={{
+                      background: "var(--bg-2)",
+                      border: "1px solid var(--border-subtle)",
+                      borderRadius: 12,
+                      padding: "10px 12px",
+                      marginBottom: 8,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12
+                    }}
+                  >
+                     {/* Icon */}
+                     <div style={{ flexShrink: 0 }}>
+                        {u.status === "uploading" && <Loader2 size={16} className="spin" style={{ color: "var(--purple)" }} />}
+                        {u.status === "done" && <CheckCircle size={16} style={{ color: "var(--emerald)" }} />}
+                        {u.status === "error" && <AlertCircle size={16} style={{ color: "var(--rose)" }} />}
+                        {u.status === "canceled" && <AlertCircle size={16} style={{ color: "var(--text-4)" }} />}
+                        {u.status === "pending" && <div style={{ width: 16, height: 16, borderRadius: "50%", border: "2px solid var(--border-default)" }} />}
+                     </div>
+
+                     {/* Info */}
+                     <div style={{ flex: 1, minWidth: 0 }}>
+                        {u.status === "pending" ? (
+                          <input 
+                            type="text" 
+                            value={u.customName}
+                            onChange={(e) => updateUpload(u.id, { customName: e.target.value })}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ 
+                              width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid var(--border-subtle)", 
+                              borderRadius: 4, padding: "2px 6px", fontSize: 12, color: "var(--text-1)", outline: "none" 
+                            }}
+                          />
+                        ) : (
+                          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-1)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {u.customName}
+                          </div>
+                        )}
+                        
+                        {u.status === "uploading" && (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+                            <div style={{ flex: 1, height: 4, background: "var(--border-subtle)", borderRadius: 99, overflow: "hidden" }}>
+                              <div style={{ width: `${u.progress}%`, height: "100%", background: "var(--purple)", transition: "width 0.2s" }} />
+                            </div>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: "var(--purple)" }}>%{u.progress}</span>
+                          </div>
+                        )}
+                        
+                        {u.status === "error" && <div style={{ fontSize: 11, color: "var(--rose)", marginTop: 2 }}>{u.error}</div>}
+                        {u.status === "canceled" && <div style={{ fontSize: 11, color: "var(--text-4)", marginTop: 2 }}>İptal edildi</div>}
+                     </div>
+
+                     {/* Actions */}
+                     <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 6 }}>
+                       {(u.status === "pending" || u.status === "uploading" || u.status === "error" || u.status === "canceled" || u.status === "done") && (
+                         <button 
+                           onClick={(e) => { e.stopPropagation(); handleCancelOrRemove(u); }}
+                           style={{ background: "rgba(255,255,255,0.05)", border: "none", padding: 6, borderRadius: 6, cursor: "pointer", color: "var(--text-2)" }}
+                           title={u.status === "uploading" ? "İptal" : "Kaldır"}
+                         >
+                           <X size={14} />
+                         </button>
+                       )}
+                     </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </div>
+            
+            {/* Start Button */}
+            {uploads.some(u => u.status === "pending") && (
+              <div style={{ padding: "12px", borderTop: "1px solid var(--border-subtle)", background: "var(--bg-2)" }}>
+                <button onClick={startUploads} className="btn btn-primary" style={{ width: "100%", justifyContent: "center" }}>
+                  <Play size={14} fill="white" /> Tümünü Başlat
+                </button>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Video player */}
       <AnimatePresence>

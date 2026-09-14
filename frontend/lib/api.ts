@@ -1,6 +1,7 @@
 import axios from "axios";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || `http://${host}:8000`;
 
 const api = axios.create({
   baseURL: API_BASE,
@@ -75,21 +76,39 @@ export async function uploadFile(
   customName?: string,
   abortController?: AbortController
 ): Promise<FileItem> {
+  const uploadId = crypto.randomUUID();
   const form = new FormData();
   form.append("file", file);
   form.append("folder", folder);
+  form.append("upload_id", uploadId);
   if (customName) {
     form.append("custom_name", customName);
   }
-  const res = await api.post("/api/files/upload", form, {
-    timeout: 0, // Sınır yok
-    signal: abortController?.signal,
-    onUploadProgress: (e) => {
-      if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100));
-    },
-  });
-  // Backend { success, file, message } veya direkt FileItem dönebilir
-  return res.data.file ?? res.data;
+
+  let interval: ReturnType<typeof setInterval>;
+  if (onProgress) {
+    // Backend'in Telegram'a yüklemesini saniyede 1 kontrol ediyoruz.
+    interval = setInterval(async () => {
+      try {
+        const pRes = await api.get(`/api/files/progress/${uploadId}`);
+        if (pRes.data && pRes.data.progress) {
+          onProgress(pRes.data.progress);
+        }
+      } catch (e) {
+        // Hata yoksay
+      }
+    }, 1000);
+  }
+
+  try {
+    const res = await api.post("/api/files/upload", form, {
+      timeout: 0, // Sınır yok
+      signal: abortController?.signal,
+    });
+    return res.data.file ?? res.data;
+  } finally {
+    if (interval) clearInterval(interval);
+  }
 }
 
 export async function deleteFile(messageId: number): Promise<void> {

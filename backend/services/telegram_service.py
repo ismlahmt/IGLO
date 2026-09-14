@@ -18,6 +18,14 @@ CAPTION_PREFIX = "IGLO::v1"
 
 _client: Optional[Client] = None
 
+UPLOAD_PROGRESS = {}
+STREAM_SEMAPHORES = {}
+
+def get_stream_semaphore(message_id: int) -> asyncio.Semaphore:
+    if message_id not in STREAM_SEMAPHORES:
+        STREAM_SEMAPHORES[message_id] = asyncio.Semaphore(1)
+    return STREAM_SEMAPHORES[message_id]
+
 
 def _build_caption(file: FileItem) -> str:
     return (
@@ -67,7 +75,7 @@ async def get_client() -> Client:
                 api_id=settings.telegram_api_id,
                 api_hash=settings.telegram_api_hash,
                 session_string=settings.telegram_session_string,
-                in_memory=True,
+                ipv6=False,
             )
         else:
             _client = Client(
@@ -75,6 +83,7 @@ async def get_client() -> Client:
                 api_id=settings.telegram_api_id,
                 api_hash=settings.telegram_api_hash,
                 workdir=".",
+                ipv6=False,
             )
         await _client.start()
         await _resolve_channel_peer(_client, settings.telegram_channel_id)
@@ -156,6 +165,7 @@ async def upload_file(
     filename: str,
     mime_type: str,
     folder: str = "/",
+    upload_id: str = None
 ) -> FileItem:
     """Dosyayı şifrele ve Telegram'a yükle."""
     import hashlib
@@ -163,11 +173,15 @@ async def upload_file(
     client = await get_client()
     settings = get_settings()
 
-    # Checksum (orijinal veriden)
-    checksum = "sha256:" + hashlib.sha256(file_data).hexdigest()
-
     # Şifrele
     encrypted_data = crypto_service.encrypt_bytes(file_data)
+    nonce = encrypted_data[:16]
+    import base64
+    nonce_b64 = base64.b64encode(nonce).decode('utf-8')
+    
+    # Checksum (orijinal veriden + nonce)
+    checksum = f"aes-ctr:{nonce_b64}:" + hashlib.sha256(file_data).hexdigest()
+
     encrypted_stream = io.BytesIO(encrypted_data)
     encrypted_stream.name = filename + ".enc"
 
@@ -185,6 +199,10 @@ async def upload_file(
 
     caption = _build_caption(temp_file)
 
+    async def progress(current, total):
+        if upload_id and total > 0:
+            UPLOAD_PROGRESS[upload_id] = int((current / total) * 100)
+
     # Telegram'a yükle
     message: Message = await client.send_document(
         chat_id=settings.telegram_channel_id,
@@ -192,10 +210,14 @@ async def upload_file(
         caption=caption,
         file_name=filename + ".enc",
         force_document=True,
+        progress=progress
     )
 
     temp_file.message_id = message.id
     cache_service.add_file(temp_file)
+    if upload_id in UPLOAD_PROGRESS:
+        del UPLOAD_PROGRESS[upload_id]
+        
     return temp_file
 
 
@@ -223,20 +245,106 @@ async def stream_file_chunks(
     start: int = 0,
     end: Optional[int] = None,
 ) -> AsyncGenerator[bytes, None]:
-    """
-    Video/audio streaming için chunk bazında veri döndür.
-    Önce tüm şifreli dosyayı indir, çöz, sonra range'i slice et.
-    """
-    data = await download_file_bytes(message_id)
+    client = await get_client()
+    settings = get_settings()
+    file_item = cache_service.get_file(message_id)
 
-    if end is None:
-        end = len(data) - 1
+    msg = await client.get_messages(settings.telegram_channel_id, message_id)
+    sem = get_stream_semaphore(message_id)
 
-    chunk = data[start: end + 1]
-    chunk_size = 64 * 1024  # 64KB parçalar halinde gönder
+    if not file_item or not file_item.encrypted:
+        # Şifresiz ise
+        chunk_size = 1024 * 1024
+        first_chunk = start // chunk_size
+        last_chunk = end // chunk_size if end is not None else None
+        limit = (last_chunk - first_chunk + 1) if last_chunk is not None else 0
+        
+        current_byte = first_chunk * chunk_size
+        async with sem:
+            async for chunk in client.stream_media(msg, limit=limit, offset=first_chunk):
+                chunk_start = current_byte
+                chunk_end = current_byte + len(chunk) - 1
+                current_byte += len(chunk)
+                
+                # Slice chunk if needed
+                slice_start = max(0, start - chunk_start)
+                slice_end = len(chunk) if end is None else min(len(chunk), end - chunk_start + 1)
+                
+                if slice_start < slice_end:
+                    yield chunk[slice_start:slice_end]
+        return
 
-    for i in range(0, len(chunk), chunk_size):
-        yield chunk[i: i + chunk_size]
+    # Şifreli (AES-CTR) ise ilk 16 byte nonce'dur.
+    actual_start = start + 16
+    actual_end = end + 16 if end is not None else None
+    
+    chunk_size = 1024 * 1024
+    first_chunk = actual_start // chunk_size
+    last_chunk = actual_end // chunk_size if actual_end is not None else None
+    limit = (last_chunk - first_chunk + 1) if last_chunk is not None else 0
+
+    # Nonce'u bul
+    import base64
+    nonce = b""
+    if file_item.checksum and file_item.checksum.startswith("aes-ctr:"):
+        try:
+            nonce_b64 = file_item.checksum.split(":")[1]
+            nonce = base64.b64decode(nonce_b64)
+        except:
+            pass
+            
+    # Eğer first_chunk > 0 ise ve nonce yoksa, nonce'u mecbur ayrı bir istekle almalıyız
+    if not nonce and first_chunk > 0:
+        async with sem:
+            async for chunk in client.stream_media(msg, limit=1, offset=0):
+                if not nonce:
+                    nonce = chunk[:16]
+        if nonce and len(nonce) >= 16:
+            nonce_b64 = base64.b64encode(nonce[:16]).decode('utf-8')
+            file_item.checksum = f"aes-ctr:{nonce_b64}:" + (file_item.checksum or "")
+
+    decryptor = None
+    discard = 0
+    if nonce and len(nonce) >= 16:
+        decryptor, discard = crypto_service.get_seekable_decryptor(nonce, start)
+
+    current_byte = first_chunk * chunk_size
+    first_yield = True
+
+    async with sem:
+        async for chunk in client.stream_media(msg, limit=limit, offset=first_chunk):
+            # İlk chunk 0'dan başlıyorsa ve nonce hala yoksa, doğrudan bu akıştan nonce'u alabiliriz! (Extra bağlantı engellenir)
+            if not nonce and first_yield and first_chunk == 0:
+                nonce = chunk[:16]
+                if len(nonce) >= 16:
+                    nonce_b64 = base64.b64encode(nonce[:16]).decode('utf-8')
+                    file_item.checksum = f"aes-ctr:{nonce_b64}:" + (file_item.checksum or "")
+                    decryptor, discard = crypto_service.get_seekable_decryptor(nonce, start)
+                else:
+                    return # Hata, dosya çok küçük
+
+            chunk_start = current_byte
+            chunk_end = current_byte + len(chunk) - 1
+            current_byte += len(chunk)
+            
+            slice_start = max(0, actual_start - chunk_start)
+            slice_end = len(chunk) if actual_end is None else min(len(chunk), actual_end - chunk_start + 1)
+            
+            if slice_start >= slice_end:
+                continue
+                
+            data_to_decrypt = chunk[slice_start:slice_end]
+            if decryptor:
+                decrypted = decryptor.update(data_to_decrypt)
+            else:
+                decrypted = data_to_decrypt # Fallback (shouldn't happen)
+                
+            if first_yield:
+                decrypted = decrypted[discard:]
+                first_yield = False
+                
+            if decrypted:
+                yield decrypted
 
 
 async def delete_file(message_id: int):
