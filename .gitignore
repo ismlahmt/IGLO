@@ -1,0 +1,19 @@
+# Backend
+backend/.env
+backend/cache.json
+backend/*.session
+backend/iglo_session.session
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.pyc
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+
+# Genel
+.DS_Store
+*.log
+Thumbs.db
