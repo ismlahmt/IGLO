@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Play, Pause, Volume2, VolumeX, Maximize, Download } from "lucide-react";
+import { X, Play, Pause, Volume2, VolumeX, Maximize, Download, AlertCircle } from "lucide-react";
 import { getStreamUrl, getDownloadUrl, FileItem } from "@/lib/api";
 
 interface VideoPlayerProps {
@@ -16,6 +16,7 @@ export default function VideoPlayer({ file, onClose }: VideoPlayerProps) {
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
   const [showControls, setShowControls] = useState(true);
+  const [hasError, setHasError] = useState(false);
   const controlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const streamUrl = getStreamUrl(file.message_id);
@@ -29,7 +30,14 @@ export default function VideoPlayer({ file, onClose }: VideoPlayerProps) {
   function togglePlay() {
     const v = videoRef.current;
     if (!v) return;
-    if (v.paused) { v.play(); setPlaying(true); }
+    if (v.paused) { 
+      const playPromise = v.play();
+      if (playPromise !== undefined) {
+        playPromise.then(() => setPlaying(true)).catch((error) => console.error("Play interrupted:", error));
+      } else {
+        setPlaying(true);
+      }
+    }
     else { v.pause(); setPlaying(false); }
   }
 
@@ -50,8 +58,18 @@ export default function VideoPlayer({ file, onClose }: VideoPlayerProps) {
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    const onTime = () => setProgress((v.currentTime / v.duration) * 100);
-    const onMeta = () => setDuration(v.duration);
+    const onTime = () => {
+      if (v.duration && !isNaN(v.duration)) {
+        setProgress((v.currentTime / v.duration) * 100);
+      } else {
+        setProgress(0);
+      }
+    };
+    const onMeta = () => {
+      if (v.duration && !isNaN(v.duration)) {
+        setDuration(v.duration);
+      }
+    };
     const onEnded = () => setPlaying(false);
     v.addEventListener("timeupdate", onTime);
     v.addEventListener("loadedmetadata", onMeta);
@@ -76,14 +94,15 @@ export default function VideoPlayer({ file, onClose }: VideoPlayerProps) {
   return (
     <AnimatePresence>
       <motion.div
-        className="modal-backdrop"
+        className="modal-bg"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         onClick={(e) => e.target === e.currentTarget && onClose()}
       >
         <motion.div
-          className="relative w-full max-w-5xl mx-4"
+          className="relative w-full max-w-5xl mx-4 flex flex-col justify-center"
+          style={{ maxHeight: "95vh" }}
           initial={{ scale: 0.95, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0.95, opacity: 0 }}
@@ -118,16 +137,32 @@ export default function VideoPlayer({ file, onClose }: VideoPlayerProps) {
 
           {/* Video */}
           <div
-            className="video-player-container relative rounded-2xl overflow-hidden"
-            style={{ background: "#000", aspectRatio: "16/9" }}
+            className="video-player-container relative rounded-2xl overflow-hidden shadow-2xl flex items-center justify-center"
+            style={{ 
+              background: "#04040a", 
+              border: "1px solid rgba(255,255,255,0.1)", 
+              aspectRatio: "16/9", 
+              maxHeight: "calc(90vh - 60px)" 
+            }}
           >
-            <video
-              ref={videoRef}
-              src={streamUrl}
-              muted={muted}
-              onClick={togglePlay}
-              style={{ width: "100%", height: "100%", objectFit: "contain", cursor: "pointer" }}
-            />
+            {hasError ? (
+              <div className="flex flex-col items-center justify-center text-center p-6">
+                <AlertCircle size={48} className="mb-4" style={{ color: "var(--rose)" }} />
+                <p className="text-sm font-semibold mb-2" style={{ color: "var(--text-1)" }}>Video Yüklenemedi</p>
+                <p className="text-xs max-w-xs" style={{ color: "var(--text-3)" }}>
+                  Medya sunucudan çekilirken bir sorun oluştu. Bağlantı zaman aşımına uğramış olabilir. Lütfen daha sonra tekrar deneyin veya videoyu indirin.
+                </p>
+              </div>
+            ) : (
+              <video
+                ref={videoRef}
+                src={streamUrl}
+                muted={muted}
+                onClick={togglePlay}
+                onError={() => { setHasError(true); setPlaying(false); }}
+                style={{ width: "100%", height: "100%", objectFit: "contain", cursor: "pointer" }}
+              />
+            )}
 
             {/* Play/Pause overlay */}
             <AnimatePresence>
@@ -162,7 +197,7 @@ export default function VideoPlayer({ file, onClose }: VideoPlayerProps) {
                     type="range"
                     min={0}
                     max={100}
-                    value={progress}
+                    value={Number.isNaN(progress) ? 0 : progress}
                     onChange={seek}
                     className="w-full mb-3"
                     style={{ accentColor: "#6366f1", cursor: "pointer" }}

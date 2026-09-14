@@ -1,16 +1,19 @@
 "use client";
 import { useCallback, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Upload, FolderOpen, X, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
+import { Upload, FolderOpen, X, CheckCircle, AlertCircle, Loader2, Play } from "lucide-react";
 import { uploadFile, FileItem } from "@/lib/api";
+import axios from "axios";
 
 interface UploadItem {
   id: string;
   file: File;
+  customName: string;
   progress: number;
-  status: "pending" | "uploading" | "done" | "error";
+  status: "pending" | "uploading" | "done" | "error" | "canceled";
   error?: string;
   result?: FileItem;
+  abortController?: AbortController;
 }
 
 interface DropZoneProps {
@@ -26,46 +29,72 @@ export default function DropZone({ currentFolder, onUploadComplete }: DropZonePr
     setUploads((prev) => prev.map((u) => (u.id === id ? { ...u, ...patch } : u)));
   }
 
-  async function processFiles(files: FileList | File[]) {
+  function handleFilesSelected(files: FileList | File[]) {
     const arr = Array.from(files);
     const items: UploadItem[] = arr.map((f) => ({
       id: Math.random().toString(36).slice(2),
       file: f,
+      customName: f.name,
       progress: 0,
       status: "pending",
     }));
     setUploads((prev) => [...prev, ...items]);
-
-    for (const item of items) {
-      updateUpload(item.id, { status: "uploading" });
-      try {
-        const result = await uploadFile(item.file, currentFolder, (pct) => {
-          updateUpload(item.id, { progress: pct });
-        });
-        updateUpload(item.id, { status: "done", progress: 100, result });
-        onUploadComplete(result);
-        // 3 saniye sonra listeden kaldır
-        setTimeout(() => setUploads((prev) => prev.filter((u) => u.id !== item.id)), 3000);
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : "Yükleme başarısız";
-        updateUpload(item.id, { status: "error", error: msg });
-      }
-    }
   }
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
       setDragging(false);
-      if (e.dataTransfer.files.length) processFiles(e.dataTransfer.files);
+      if (e.dataTransfer.files.length) handleFilesSelected(e.dataTransfer.files);
     },
-    [currentFolder]
+    []
   );
 
   function onInputChange(e: React.ChangeEvent<HTMLInputElement>) {
-    if (e.target.files?.length) processFiles(e.target.files);
+    if (e.target.files?.length) handleFilesSelected(e.target.files);
     e.target.value = "";
   }
+
+  async function startUploads() {
+    const pendingItems = uploads.filter((u) => u.status === "pending");
+    for (const item of pendingItems) {
+      const abortController = new AbortController();
+      updateUpload(item.id, { status: "uploading", abortController });
+      try {
+        const result = await uploadFile(
+          item.file,
+          currentFolder,
+          (pct) => {
+            updateUpload(item.id, { progress: pct });
+          },
+          item.customName,
+          abortController
+        );
+        updateUpload(item.id, { status: "done", progress: 100, result });
+        onUploadComplete(result);
+        
+        setTimeout(() => setUploads((prev) => prev.filter((u) => u.id !== item.id)), 4000);
+      } catch (e: unknown) {
+        if (axios.isCancel(e)) {
+          updateUpload(item.id, { status: "canceled" });
+          setTimeout(() => setUploads((prev) => prev.filter((u) => u.id !== item.id)), 3000);
+        } else {
+          const msg = e instanceof Error ? e.message : "Yükleme başarısız";
+          updateUpload(item.id, { status: "error", error: msg });
+        }
+      }
+    }
+  }
+
+  function handleCancelOrRemove(item: UploadItem) {
+    if (item.status === "uploading" && item.abortController) {
+      item.abortController.abort();
+    } else {
+      setUploads((prev) => prev.filter((x) => x.id !== item.id));
+    }
+  }
+
+  const hasPending = uploads.some((u) => u.status === "pending");
 
   return (
     <div className="space-y-4">
@@ -130,17 +159,34 @@ export default function DropZone({ currentFolder, onUploadComplete }: DropZonePr
                   {u.status === "uploading" && <Loader2 size={16} className="animate-spin" style={{ color: "var(--accent)" }} />}
                   {u.status === "done" && <CheckCircle size={16} style={{ color: "var(--success)" }} />}
                   {u.status === "error" && <AlertCircle size={16} style={{ color: "var(--danger)" }} />}
+                  {u.status === "canceled" && <AlertCircle size={16} style={{ color: "var(--text-muted)" }} />}
                   {u.status === "pending" && <div className="w-4 h-4 rounded-full" style={{ border: "2px solid var(--border)" }} />}
                 </div>
 
                 {/* File info */}
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium truncate" style={{ color: "var(--text-primary)" }}>
-                    {u.file.name}
-                  </p>
+                  {u.status === "pending" ? (
+                    <input 
+                      type="text" 
+                      value={u.customName}
+                      onChange={(e) => updateUpload(u.id, { customName: e.target.value })}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-full text-xs font-medium bg-transparent border-b border-gray-600 focus:border-indigo-500 outline-none px-1 py-0.5 mb-1 text-white"
+                    />
+                  ) : (
+                    <p className="text-xs font-medium truncate" style={{ color: "var(--text-primary)" }}>
+                      {u.customName}
+                    </p>
+                  )}
+
                   {u.status === "uploading" && (
-                    <div className="progress-bar mt-1">
-                      <div className="progress-bar-fill" style={{ width: `${u.progress}%` }} />
+                    <div className="flex items-center gap-2 mt-1">
+                      <div className="progress-bar flex-1">
+                        <div className="progress-bar-fill" style={{ width: `${u.progress}%` }} />
+                      </div>
+                      <span className="text-[10px] font-medium" style={{ color: "var(--accent)" }}>
+                        %{u.progress}
+                      </span>
                     </div>
                   )}
                   {u.status === "done" && (
@@ -149,6 +195,9 @@ export default function DropZone({ currentFolder, onUploadComplete }: DropZonePr
                   {u.status === "error" && (
                     <p className="text-xs mt-0.5 truncate" style={{ color: "var(--danger)" }}>{u.error}</p>
                   )}
+                  {u.status === "canceled" && (
+                    <p className="text-xs mt-0.5 truncate" style={{ color: "var(--text-muted)" }}>İptal edildi</p>
+                  )}
                 </div>
 
                 {/* Size */}
@@ -156,17 +205,35 @@ export default function DropZone({ currentFolder, onUploadComplete }: DropZonePr
                   {(u.file.size / 1024 / 1024).toFixed(1)} MB
                 </span>
 
-                {/* Remove */}
-                {(u.status === "done" || u.status === "error") && (
+                {/* Cancel/Remove Button */}
+                {(u.status === "pending" || u.status === "uploading" || u.status === "done" || u.status === "error" || u.status === "canceled") && (
                   <button
-                    onClick={() => setUploads((prev) => prev.filter((x) => x.id !== u.id))}
-                    style={{ color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer" }}
+                    onClick={(e) => { e.stopPropagation(); handleCancelOrRemove(u); }}
+                    className="p-1 rounded hover:bg-white/10 transition-colors"
+                    title={u.status === "uploading" ? "İptal et" : "Kaldır"}
+                    style={{ color: "var(--text-muted)" }}
                   >
                     <X size={14} />
                   </button>
                 )}
               </motion.div>
             ))}
+
+            {hasPending && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="pt-2 flex justify-end"
+              >
+                <button
+                  onClick={(e) => { e.stopPropagation(); startUploads(); }}
+                  className="btn-primary flex items-center gap-2 px-4 py-2 text-sm font-medium"
+                >
+                  <Play size={14} />
+                  Yüklemeyi Başlat
+                </button>
+              </motion.div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>

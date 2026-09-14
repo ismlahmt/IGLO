@@ -71,13 +71,19 @@ export async function listFiles(params?: {
 export async function uploadFile(
   file: File,
   folder: string = "/",
-  onProgress?: (percent: number) => void
+  onProgress?: (percent: number) => void,
+  customName?: string,
+  abortController?: AbortController
 ): Promise<FileItem> {
   const form = new FormData();
   form.append("file", file);
   form.append("folder", folder);
+  if (customName) {
+    form.append("custom_name", customName);
+  }
   const res = await api.post("/api/files/upload", form, {
-    timeout: 10 * 60 * 1000, // 10 dakika — büyük dosyalar için
+    timeout: 0, // Sınır yok
+    signal: abortController?.signal,
     onUploadProgress: (e) => {
       if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100));
     },
@@ -106,7 +112,8 @@ export function getStreamUrl(messageId: number): string {
 }
 
 export function getDownloadUrl(messageId: number): string {
-  return `${API_BASE}/api/files/download/${messageId}`;
+  const token = typeof window !== "undefined" ? localStorage.getItem("iglo_token") : "";
+  return `${API_BASE}/api/files/download/${messageId}?token=${token}`;
 }
 
 // ─── Migration ────────────────────────────────────────

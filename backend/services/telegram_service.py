@@ -206,14 +206,11 @@ async def download_file_bytes(message_id: int) -> bytes:
 
     file_item = cache_service.get_file(message_id)
 
-    buf = io.BytesIO()
-    await client.download_media(
+    res = await client.download_media(
         message=await client.get_messages(settings.telegram_channel_id, message_id),
-        file_name=buf,
         in_memory=True,
     )
-    buf.seek(0)
-    data = buf.read()
+    data = res.getvalue() if res else b""
 
     if file_item and file_item.encrypted:
         data = crypto_service.decrypt_bytes(data)
@@ -289,10 +286,8 @@ async def migrate_to_new_channel(
         msg = await source_client.get_messages(
             settings.telegram_channel_id, file_item.message_id
         )
-        buf = io.BytesIO()
-        await source_client.download_media(msg, file_name=buf, in_memory=True)
-        buf.seek(0)
-        encrypted_data = buf.read()
+        res = await source_client.download_media(msg, in_memory=True)
+        encrypted_data = res.getvalue() if res else b""
 
         # Yeni kanala yükle (aynı caption)
         caption = _build_caption(file_item)

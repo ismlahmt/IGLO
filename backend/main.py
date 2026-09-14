@@ -18,23 +18,23 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
 
     # Başlangıç: Telegram'a bağlan ve cache güncelle
-    print("🚀 IGLO başlatılıyor...")
+    print("IGLO baslatiliyor...")
 
     if settings.telegram_api_id and settings.telegram_api_hash:
         try:
-            print("📡 Telegram'a bağlanılıyor...")
+            print("Telegram'a baglaniliyor...")
             await telegram_service.sync_from_telegram(full_refresh=False)
-            print("✅ Telegram bağlantısı kuruldu, cache güncellendi")
+            print("Telegram baglantisi kuruldu, cache guncellendi")
         except Exception as e:
-            print(f"⚠️  Telegram bağlantı hatası: {e}")
+            print(f"Telegram baglanti hatasi: {e}")
             print("    .env dosyasını kontrol edin")
     else:
-        print("⚠️  Telegram bilgileri eksik — .env dosyasını yapılandırın")
+        print("Telegram bilgileri eksik -- .env dosyasini yapilandirin")
 
     yield
 
     # Kapanış: Telegram client'ı durdur
-    print("🛑 IGLO kapatılıyor...")
+    print("IGLO kapatiliyor...")
     await telegram_service.shutdown_client()
 
 

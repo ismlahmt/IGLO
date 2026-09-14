@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from services import telegram_service, cache_service
-from services.auth_service import get_current_user
+from services.auth_service import get_current_user, get_current_user_query
 
 router = APIRouter(prefix="/api/stream", tags=["streaming"])
 
@@ -10,7 +10,7 @@ router = APIRouter(prefix="/api/stream", tags=["streaming"])
 async def stream_video(
     message_id: int,
     request: Request,
-    _: str = Depends(get_current_user),
+    _: str = Depends(get_current_user_query),
 ):
     """
     Video/Audio streaming endpoint.

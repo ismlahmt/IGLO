@@ -35,16 +35,20 @@ async def list_files(
 async def upload_file(
     file: UploadFile = File(...),
     folder: str = Form(default="/"),
+    custom_name: Optional[str] = Form(default=None),
     _: str = Depends(get_current_user),
 ):
     """Dosya yükle — şifrele ve Telegram'a gönder."""
     try:
         data = await file.read()
         mime_type = file.content_type or "application/octet-stream"
+        
+        # Eğer custom_name verilmişse onu kullan, yoksa dosyanın orjinal ismini kullan
+        final_name = custom_name if custom_name else file.filename
 
         result = await telegram_service.upload_file(
             file_data=data,
-            filename=file.filename,
+            filename=final_name,
             mime_type=mime_type,
             folder=folder,
         )

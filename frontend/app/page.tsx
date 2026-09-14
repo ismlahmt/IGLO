@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { isAuthenticated, logout, listFiles, syncFiles, getStats, uploadFile, deleteFile, FileItem, getDownloadUrl } from "@/lib/api";
 import VideoPlayer from "@/components/VideoPlayer";
+import axios from "axios";
 
 /* ── helpers ──────────────────────────────────── */
 function fmtSize(b: number) {
@@ -48,15 +49,15 @@ const CATS = [
 
 /* ── Upload state ─────────────────────────────── */
 interface UploadItem {
-  id: string; file: File; progress: number;
-  status: "pending"|"uploading"|"done"|"error"; error?: string;
+  id: string; file: File; progress: number; customName: string;
+  status: "pending"|"uploading"|"done"|"error"|"canceled"; error?: string; abortController?: AbortController;
 }
 
 /* ── File card ────────────────────────────────── */
-function FileCard({ file, index, onPlay, onDelete }: {
+function FileCard({ file, index, onPlay, onDeleteRequest }: {
   file: FileItem; index: number;
   onPlay: (f: FileItem) => void;
-  onDelete: (id: number) => void;
+  onDeleteRequest: (f: FileItem) => void;
 }) {
   const [menu, setMenu] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -76,10 +77,7 @@ function FileCard({ file, index, onPlay, onDelete }: {
   async function handleDelete(e: React.MouseEvent) {
     e.stopPropagation();
     setMenu(false);
-    if (!confirm(`"${file.name}" silinsin mi?`)) return;
-    setDeleting(true);
-    try { await deleteFile(file.message_id); onDelete(file.message_id); }
-    catch { alert("Silme başarısız"); setDeleting(false); }
+    onDeleteRequest(file);
   }
 
   return (
@@ -169,6 +167,7 @@ export default function HomePage() {
   const [dragging, setDragging] = useState(false);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [playingFile, setPlayingFile] = useState<FileItem | null>(null);
+  const [fileToDelete, setFileToDelete] = useState<FileItem | null>(null);
   const [stats, setStats] = useState<{ total_files: number; total_size: number } | null>(null);
   const [folder, setFolder] = useState("/");
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -213,23 +212,40 @@ export default function HomePage() {
     setUploads(prev => prev.map(u => u.id === id ? { ...u, ...patch } : u));
   }
 
-  async function processFiles(fileList: FileList | File[]) {
+  function handleFilesSelected(fileList: FileList | File[]) {
     const arr = Array.from(fileList);
-    const items: UploadItem[] = arr.map(f => ({ id: crypto.randomUUID(), file: f, progress: 0, status: "pending" as const }));
+    const items: UploadItem[] = arr.map(f => ({ id: crypto.randomUUID(), file: f, customName: f.name, progress: 0, status: "pending" as const }));
     setUploads(prev => [...prev, ...items]);
     setShowUpload(true);
+  }
 
-    for (const item of items) {
-      updateUpload(item.id, { status: "uploading" });
+  async function startUploads() {
+    const pendingItems = uploads.filter(u => u.status === "pending");
+    for (const item of pendingItems) {
+      const abortController = new AbortController();
+      updateUpload(item.id, { status: "uploading", abortController });
       try {
-        const result = await uploadFile(item.file, folder, pct => updateUpload(item.id, { progress: pct }));
+        const result = await uploadFile(item.file, folder, pct => updateUpload(item.id, { progress: pct }), item.customName, abortController);
         updateUpload(item.id, { status: "done", progress: 100 });
         setFiles(prev => [result, ...prev]);
         loadStats();
         setTimeout(() => setUploads(prev => prev.filter(u => u.id !== item.id)), 4000);
       } catch (e: unknown) {
-        updateUpload(item.id, { status: "error", error: e instanceof Error ? e.message : "Hata" });
+        if (axios.isCancel(e)) {
+          updateUpload(item.id, { status: "canceled" });
+          setTimeout(() => setUploads(prev => prev.filter(u => u.id !== item.id)), 3000);
+        } else {
+          updateUpload(item.id, { status: "error", error: e instanceof Error ? e.message : "Hata" });
+        }
       }
+    }
+  }
+
+  function handleCancelOrRemove(item: UploadItem) {
+    if (item.status === "uploading" && item.abortController) {
+      item.abortController.abort();
+    } else {
+      setUploads(prev => prev.filter(x => x.id !== item.id));
     }
   }
 
@@ -439,7 +455,7 @@ export default function HomePage() {
                     type="file"
                     multiple
                     style={{ display: "none" }}
-                    onChange={e => { if (e.target.files?.length) processFiles(e.target.files); e.target.value = ""; }}
+                    onChange={e => { if (e.target.files?.length) handleFilesSelected(e.target.files); e.target.value = ""; }}
                   />
                   <div className="drop-icon-wrap">
                     <Upload size={22} style={{ color: "var(--purple)" }} />
@@ -467,25 +483,57 @@ export default function HomePage() {
                         {u.status === "uploading" && <Loader2 size={14} className="spin" style={{ color: "var(--purple)" }} />}
                         {u.status === "done" && <CheckCircle size={14} style={{ color: "var(--emerald)" }} />}
                         {u.status === "error" && <AlertCircle size={14} style={{ color: "var(--rose)" }} />}
+                        {u.status === "canceled" && <AlertCircle size={14} style={{ color: "var(--text-4)" }} />}
                         {u.status === "pending" && <div style={{ width: 14, height: 14, borderRadius: "50%", border: "2px solid var(--border-default)" }} />}
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-1)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.file.name}</div>
+                        {u.status === "pending" ? (
+                          <input 
+                            type="text" 
+                            value={u.customName}
+                            onChange={(e) => updateUpload(u.id, { customName: e.target.value })}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-full bg-transparent border-b border-gray-600 outline-none px-1 mb-1 text-white"
+                            style={{ fontSize: 12, fontWeight: 600 }}
+                          />
+                        ) : (
+                          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-1)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {u.customName}
+                          </div>
+                        )}
+                        
                         {u.status === "uploading" && (
-                          <div className="upload-progress">
-                            <div className="upload-progress-fill" style={{ width: `${u.progress}%` }} />
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                            <div className="upload-progress" style={{ flex: 1 }}>
+                              <div className="upload-progress-fill" style={{ width: `${u.progress}%` }} />
+                            </div>
+                            <span style={{ fontSize: 10, color: "var(--purple)", fontWeight: 600 }}>%{u.progress}</span>
                           </div>
                         )}
                         {u.status === "error" && <div style={{ fontSize: 11, color: "var(--rose)", marginTop: 2 }}>{u.error}</div>}
+                        {u.status === "canceled" && <div style={{ fontSize: 11, color: "var(--text-4)", marginTop: 2 }}>İptal edildi</div>}
                       </div>
                       <span style={{ fontSize: 11, color: "var(--text-4)", flexShrink: 0 }}>{fmtSize(u.file.size)}</span>
-                      {(u.status === "done" || u.status === "error") && (
-                        <button onClick={() => setUploads(prev => prev.filter(x => x.id !== u.id))} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-3)", flexShrink: 0 }}>
+                      
+                      {(u.status === "pending" || u.status === "uploading" || u.status === "done" || u.status === "error" || u.status === "canceled") && (
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); handleCancelOrRemove(u); }} 
+                          style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-3)", flexShrink: 0 }}
+                          title={u.status === "uploading" ? "İptal et" : "Kaldır"}
+                        >
                           <X size={13} />
                         </button>
                       )}
                     </motion.div>
                   ))}
+
+                  {uploads.some(u => u.status === "pending") && (
+                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+                      <button onClick={startUploads} className="btn btn-primary" style={{ padding: "6px 12px", fontSize: 12 }}>
+                        <Play size={12} /> Yüklemeyi Başlat
+                      </button>
+                    </motion.div>
+                  )}
                 </AnimatePresence>
               </motion.div>
             )}
@@ -528,7 +576,7 @@ export default function HomePage() {
                   file={file}
                   index={i}
                   onPlay={setPlayingFile}
-                  onDelete={id => { setFiles(prev => prev.filter(f => f.message_id !== id)); loadStats(); }}
+                  onDeleteRequest={setFileToDelete}
                 />
               ))}
             </div>
@@ -539,6 +587,64 @@ export default function HomePage() {
       {/* Video player */}
       <AnimatePresence>
         {playingFile && <VideoPlayer file={playingFile} onClose={() => setPlayingFile(null)} />}
+      </AnimatePresence>
+
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {fileToDelete && (
+          <motion.div
+            className="modal-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setFileToDelete(null)}
+          >
+            <motion.div
+              className="modal-content"
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: -10 }}
+              onClick={e => e.stopPropagation()}
+              style={{ padding: 24, maxWidth: 380, textAlign: "center" }}
+            >
+              <div style={{ width: 48, height: 48, borderRadius: "50%", background: "var(--rose-dim)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+                <Trash2 size={24} style={{ color: "var(--rose)" }} />
+              </div>
+              <h3 style={{ fontSize: 16, fontWeight: 600, color: "var(--text-1)", marginBottom: 8 }}>
+                Dosyayı Sil
+              </h3>
+              <p style={{ fontSize: 13, color: "var(--text-3)", marginBottom: 24 }}>
+                <span style={{ color: "var(--text-2)", fontWeight: 500 }}>"{fileToDelete.name}"</span> kalıcı olarak silinecek. Bu işlem geri alınamaz. Devam etmek istiyor musun?
+              </p>
+              <div style={{ display: "flex", gap: 12 }}>
+                <button
+                  className="btn btn-secondary"
+                  style={{ flex: 1 }}
+                  onClick={() => setFileToDelete(null)}
+                >
+                  İptal
+                </button>
+                <button
+                  className="btn btn-primary"
+                  style={{ flex: 1, background: "var(--rose)", borderColor: "var(--rose)" }}
+                  onClick={async () => {
+                    const id = fileToDelete.message_id;
+                    setFileToDelete(null);
+                    try {
+                      await deleteFile(id);
+                      setFiles(prev => prev.filter(f => f.message_id !== id));
+                      loadStats();
+                    } catch {
+                      alert("Silme işlemi başarısız oldu.");
+                    }
+                  }}
+                >
+                  Evet, Sil
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
     </div>
   );
