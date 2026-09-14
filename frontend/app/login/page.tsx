@@ -3,7 +3,7 @@ import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { login } from "@/lib/api";
 import { motion } from "framer-motion";
-import { Lock, User, Eye, EyeOff, Loader2 } from "lucide-react";
+import { Eye, EyeOff, Loader2, ArrowRight, Lock, User } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -28,59 +28,104 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 relative z-10">
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "24px",
+        position: "relative",
+        zIndex: 1,
+      }}
+    >
+      {/* Center glow */}
+      <div style={{
+        position: "fixed",
+        width: 600,
+        height: 600,
+        borderRadius: "50%",
+        background: "radial-gradient(circle, rgba(99,102,241,0.1), transparent 70%)",
+        filter: "blur(60px)",
+        pointerEvents: "none",
+        top: "50%",
+        left: "50%",
+        transform: "translate(-50%,-50%)",
+      }} />
+
       <motion.div
         initial={{ opacity: 0, y: 20, scale: 0.97 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.4, ease: "easeOut" }}
-        className="w-full max-w-md"
+        transition={{ duration: 0.4, ease: [0.4, 0, 0.2, 1] }}
+        style={{ width: "100%", maxWidth: 400 }}
       >
-        {/* Logo */}
-        <div className="text-center mb-10">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4"
-            style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)", boxShadow: "0 0 40px #6366f140" }}>
-            <span className="text-2xl font-black text-white">IG</span>
-          </div>
-          <h1 className="text-3xl font-bold gradient-text">IGLO</h1>
-          <p className="text-sm mt-2" style={{ color: "var(--text-muted)" }}>Kişisel Cloud Depolama</p>
+        {/* Logo mark */}
+        <div style={{ textAlign: "center", marginBottom: 40 }}>
+          <motion.div
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ delay: 0.1, duration: 0.4 }}
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: 16,
+              background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              margin: "0 auto 16px",
+              boxShadow: "0 0 0 1px rgba(255,255,255,0.1) inset, 0 8px 32px rgba(99,102,241,0.35)",
+            }}
+          >
+            <span style={{ fontSize: 22, fontWeight: 900, color: "white", letterSpacing: -1 }}>IG</span>
+          </motion.div>
+          <h1 style={{ fontSize: 28, fontWeight: 800, color: "var(--text-1)", letterSpacing: -0.8, marginBottom: 6 }}>
+            IGLO
+          </h1>
+          <p style={{ fontSize: 13, color: "var(--text-3)", fontWeight: 500 }}>
+            Kişisel Cloud Depolama
+          </p>
         </div>
 
         {/* Card */}
-        <div className="glass rounded-2xl p-8" style={{ border: "1px solid var(--border)" }}>
-          <h2 className="text-lg font-semibold mb-6" style={{ color: "var(--text-primary)" }}>Giriş Yap</h2>
+        <div className="glass-card" style={{ padding: 28 }}>
+          <h2 style={{ fontSize: 15, fontWeight: 700, color: "var(--text-1)", marginBottom: 4 }}>Giriş Yap</h2>
+          <p style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 24 }}>Hesabına erişmek için bilgilerini gir</p>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {/* Username */}
             <div>
-              <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>
+              <label style={{ fontSize: 11, fontWeight: 600, color: "var(--text-3)", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>
                 Kullanıcı Adı
               </label>
-              <div className="relative">
-                <User size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
+              <div style={{ position: "relative" }}>
+                <User size={14} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--text-4)" }} />
                 <input
                   id="username"
                   type="text"
-                  className="input-field pl-9"
+                  className="input input-icon"
                   placeholder="admin"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   required
                   autoComplete="username"
+                  autoFocus
                 />
               </div>
             </div>
 
             {/* Password */}
             <div>
-              <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>
+              <label style={{ fontSize: 11, fontWeight: 600, color: "var(--text-3)", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>
                 Şifre
               </label>
-              <div className="relative">
-                <Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
+              <div style={{ position: "relative" }}>
+                <Lock size={14} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--text-4)" }} />
                 <input
                   id="password"
                   type={showPass ? "text" : "password"}
-                  className="input-field pl-9 pr-10"
+                  className="input input-icon"
+                  style={{ paddingRight: 40 }}
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -90,10 +135,20 @@ export default function LoginPage() {
                 <button
                   type="button"
                   onClick={() => setShowPass(!showPass)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2"
-                  style={{ color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer" }}
+                  style={{
+                    position: "absolute",
+                    right: 10,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "var(--text-3)",
+                    display: "flex",
+                    padding: 4,
+                  }}
                 >
-                  {showPass ? <EyeOff size={15} /> : <Eye size={15} />}
+                  {showPass ? <EyeOff size={14} /> : <Eye size={14} />}
                 </button>
               </div>
             </div>
@@ -103,8 +158,15 @@ export default function LoginPage() {
               <motion.div
                 initial={{ opacity: 0, y: -4 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="text-sm rounded-lg p-3"
-                style={{ background: "#f43f5e18", border: "1px solid #f43f5e30", color: "#f87171" }}
+                style={{
+                  fontSize: 12,
+                  padding: "10px 14px",
+                  borderRadius: 8,
+                  background: "var(--rose-dim)",
+                  border: "1px solid rgba(244,63,94,0.2)",
+                  color: "var(--rose)",
+                  fontWeight: 500,
+                }}
               >
                 {error}
               </motion.div>
@@ -115,17 +177,17 @@ export default function LoginPage() {
               id="login-btn"
               type="submit"
               disabled={loading}
-              className="btn-primary w-full flex items-center justify-center gap-2 mt-2"
-              style={{ opacity: loading ? 0.7 : 1 }}
+              className="btn btn-primary"
+              style={{ width: "100%", justifyContent: "center", padding: "11px 20px", marginTop: 4, fontSize: 14, opacity: loading ? 0.8 : 1 }}
             >
-              {loading ? <Loader2 size={16} className="animate-spin" /> : <Lock size={16} />}
+              {loading ? <Loader2 size={15} className="spin" /> : <ArrowRight size={15} />}
               {loading ? "Giriş yapılıyor..." : "Giriş Yap"}
             </button>
           </form>
         </div>
 
-        <p className="text-center text-xs mt-6" style={{ color: "var(--text-muted)" }}>
-          IGLO — Şifreli Kişisel Cloud • Telegram Destekli
+        <p style={{ textAlign: "center", fontSize: 11, color: "var(--text-4)", marginTop: 20 }}>
+          IGLO · Telegram destekli şifreli depolama
         </p>
       </motion.div>
     </div>

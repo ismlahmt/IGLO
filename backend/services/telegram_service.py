@@ -78,7 +78,14 @@ async def get_client() -> Client:
             )
         await _client.start()
 
+        # Kanalı peer cache'e ekle (Peer id invalid hatasını önler)
+        try:
+            await _client.get_chat(settings.telegram_channel_id)
+        except Exception:
+            pass  # Zaten biliniyorsa sorun yok
+
     return _client
+
 
 
 async def shutdown_client():
