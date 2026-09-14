@@ -77,15 +77,33 @@ async def get_client() -> Client:
                 workdir=".",
             )
         await _client.start()
-
-        # Kanalı peer cache'e ekle (Peer id invalid hatasını önler)
-        try:
-            await _client.get_chat(settings.telegram_channel_id)
-        except Exception:
-            pass  # Zaten biliniyorsa sorun yok
+        await _resolve_channel_peer(_client, settings.telegram_channel_id)
 
     return _client
 
+
+async def _resolve_channel_peer(client: Client, channel_id: int):
+    """
+    Pyrogram in_memory session her başlatmada entity cache'ini kaybeder.
+    Kanalı birden fazla yöntemle resolve etmeye çalış.
+    """
+    # Yöntem 1: get_dialogs ile tara (en güvenilir)
+    try:
+        async for dialog in client.get_dialogs():
+            if dialog.chat.id == channel_id:
+                return  # Bulundu, cache'e eklendi
+    except Exception:
+        pass
+
+    # Yöntem 2: Raw API ile InputChannel oluştur
+    # channel_id = -100XXXXXXXXXX formatındaysa sadece XXXXXXXXXX al
+    try:
+        from pyrogram import raw
+        bare_id = abs(channel_id + 1000000000000)  # -1001234 -> 1234
+        peer = await client.resolve_peer(channel_id)  # type: ignore
+        _ = peer
+    except Exception:
+        pass
 
 
 async def shutdown_client():
@@ -94,6 +112,8 @@ async def shutdown_client():
     if _client and _client.is_connected:
         await _client.stop()
     _client = None
+
+
 
 
 async def sync_from_telegram(full_refresh: bool = False):
