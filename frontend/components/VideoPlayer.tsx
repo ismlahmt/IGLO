@@ -336,6 +336,12 @@ export default function VideoPlayer({ file, onClose }: VideoPlayerProps) {
             cursor: pointer;
             border: 2px solid white;
           }
+          video::-webkit-media-controls {
+            display: none !important;
+          }
+          video::-webkit-media-controls-enclosure {
+            display: none !important;
+          }
         `}</style>
       </motion.div>
     </AnimatePresence>
