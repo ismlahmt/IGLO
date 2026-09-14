@@ -1,19 +1,39 @@
-# Backend
+# ─── Python ───────────────────────────────────────────
+backend/venv/
+backend/.venv/
+venv/
+.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Hassas dosyalar
 backend/.env
 backend/cache.json
 backend/*.session
 backend/iglo_session.session
-backend/__pycache__/
-backend/**/__pycache__/
-backend/*.pyc
 
-# Frontend
+# ─── Node / Next.js ────────────────────────────────────
+node_modules/
 frontend/node_modules/
 frontend/.next/
 frontend/out/
 frontend/.env.local
+frontend/.env*.local
+.npm/
 
-# Genel
+# ─── Genel ─────────────────────────────────────────────
 .DS_Store
-*.log
 Thumbs.db
+*.log
+*.tmp
+*.swp
+*.swo
+.idea/
+.vscode/settings.json
