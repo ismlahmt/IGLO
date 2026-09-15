@@ -16,8 +16,8 @@ build/
 # Hassas dosyalar
 backend/.env
 backend/cache.json
-backend/*.session
-backend/iglo_session.session
+*.session
+iglo_session.session
 
 # ─── Node / Next.js ────────────────────────────────────
 node_modules/
