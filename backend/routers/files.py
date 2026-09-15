@@ -125,3 +125,21 @@ async def sync_files(
 async def get_stats(_: str = Depends(get_current_user)):
     """Cache istatistiklerini döndür."""
     return cache_service.get_stats()
+
+from pydantic import BaseModel
+class RenameRequest(BaseModel):
+    new_name: str
+
+@router.put("/{message_id}/rename")
+async def rename_file(
+    message_id: int,
+    req: RenameRequest,
+    username: str = Depends(get_current_user),
+):
+    file_item = cache_service.get_file(message_id)
+    if not file_item:
+        raise HTTPException(status_code=404, detail="Dosya bulunamadı")
+    
+    file_item.name = req.new_name
+    cache_service.add_file(file_item)
+    return {"success": True, "file": file_item}

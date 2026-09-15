@@ -407,7 +407,7 @@ async def stream_file_chunks(
         return
 
     # Şifreli dosya
-    actual_start = start + 16
+    discard_bytes = start % 16; actual_start = (start - discard_bytes) + 16
     actual_end   = end   + 16
 
     first_chunk = actual_start // STREAM_CHUNK_SIZE
@@ -433,7 +433,7 @@ async def stream_file_chunks(
     if not nonce or len(nonce) < 16:
         return
 
-    decryptor, discard = crypto_service.get_seekable_decryptor(nonce, start)
+    decryptor, discard = crypto_service.get_seekable_decryptor(nonce, start - discard_bytes); discard = discard_bytes
     first_yield = True
 
     chunk_idx = first_chunk
