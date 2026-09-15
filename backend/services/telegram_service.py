@@ -264,14 +264,12 @@ async def sync_from_telegram(full_refresh: bool = False):
     client = await get_client()
     settings = get_settings()
 
-    last_id = 0 if full_refresh else cache_service.get_last_message_id()
     channel_id = settings.telegram_channel_id
     new_files = []
 
     try:
-        async for message in client.get_chat_history(channel_id):
-            if message.id <= last_id:
-                break
+        # Arama motorunu kullanarak sadece IGLO dosyalarini saniyeler icinde buluyoruz
+        async for message in client.search_messages(channel_id, query=CAPTION_PREFIX):
             if not message.caption:
                 continue
 
@@ -282,8 +280,7 @@ async def sync_from_telegram(full_refresh: bool = False):
             file_item.message_id = message.id
             new_files.append(file_item)
     except Exception as e:
-        print(f"Sync error during chat history: {e}")
-        # Ignore and process what we have so far
+        print(f"Sync error during search: {e}")
 
     if full_refresh:
         cache_service.clear_cache()
