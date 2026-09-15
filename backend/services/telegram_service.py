@@ -94,8 +94,10 @@ async def _get_chunk(client: Client, msg, message_id: int, chunk_index: int) -> 
             async for chunk in client.stream_media(msg, limit=1, offset=chunk_index):
                 data = chunk
                 break
-        except Exception:
-            return b""  # Hata → boş dön, streaming devam etsin
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return b""
 
     _CHUNK_CACHE[key] = data
     _CHUNK_CACHE.move_to_end(key)

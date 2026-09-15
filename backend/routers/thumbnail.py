@@ -78,7 +78,8 @@ async def _generate_thumbnail(message_id: int, thumb_path: Path, token: str) -> 
     settings = get_settings()
     port = settings.backend_port
 
-    stream_url = f"http://localhost:{port}/api/stream/{message_id}?token={token}"
+    port = os.environ.get("PORT", settings.backend_port)
+    stream_url = f"http://127.0.0.1:{port}/api/stream/{message_id}?token={token}"
 
     try:
         loop = asyncio.get_event_loop()
