@@ -218,9 +218,10 @@ export default function VideoPlayer({ file, onClose }: VideoPlayerProps) {
     if (!v) return;
     setHasError(false);
     setIsBuffering(false);
-    setSrcLoaded(false);
-    v.src = "";
+    setSrcLoaded(true);
+    v.src = streamUrl + "&t=" + Date.now();
     v.load();
+    v.play().catch(() => {});
   }
 
   // Spinner veya Play butonu — asla aynı anda gösterilmez

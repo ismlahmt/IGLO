@@ -427,7 +427,7 @@ async def stream_file_chunks(
             if len(chunk0) >= 16:
                 nonce = chunk0[:16]
                 nonce_b64 = base64.b64encode(nonce).decode()
-                file_item.checksum = f"aes-ctr:{nonce_b64}:" + (file_item.checksum or "")
+                file_item.checksum = f"aes-ctr:{nonce_b64}:" + (file_item.checksum or ""); cache_service.add_file(file_item)
             break
             
     if not nonce or len(nonce) < 16:
