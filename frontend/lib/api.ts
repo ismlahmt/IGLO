@@ -85,7 +85,7 @@ export async function uploadFile(
     form.append("custom_name", customName);
   }
 
-  let interval: ReturnType<typeof setInterval>;
+  let interval: ReturnType<typeof setInterval> | undefined;
   if (onProgress) {
     // Backend'in Telegram'a yüklemesini saniyede 1 kontrol ediyoruz.
     interval = setInterval(async () => {
@@ -133,6 +133,22 @@ export function getStreamUrl(messageId: number): string {
 export function getDownloadUrl(messageId: number): string {
   const token = typeof window !== "undefined" ? localStorage.getItem("iglo_token") : "";
   return `${API_BASE}/api/files/download/${messageId}?token=${token}`;
+}
+
+export function getThumbnailUrl(messageId: number): string {
+  const token = typeof window !== "undefined" ? localStorage.getItem("iglo_token") : "";
+  return `${API_BASE}/api/stream/${messageId}/thumbnail?token=${token}`;
+}
+
+export async function prefetchVideo(messageId: number): Promise<void> {
+  try {
+    const token = typeof window !== "undefined" ? localStorage.getItem("iglo_token") : "";
+    await fetch(`${API_BASE}/api/stream/${messageId}/prefetch?token=${token}`, {
+      method: "POST",
+    });
+  } catch {
+    // Prefetch hata verse de oynatma etkilenmesin
+  }
 }
 
 // ─── Migration ────────────────────────────────────────

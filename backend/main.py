@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 
 from config import get_settings
 from services import telegram_service
-from routers import auth, files, stream, migrate
+from routers import auth, files, stream, migrate, thumbnail
 
 
 @asynccontextmanager
@@ -63,6 +63,7 @@ app.include_router(auth.router)
 app.include_router(files.router)
 app.include_router(stream.router)
 app.include_router(migrate.router)
+app.include_router(thumbnail.router)
 
 
 @app.get("/api/health")

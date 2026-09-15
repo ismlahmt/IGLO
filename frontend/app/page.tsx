@@ -7,9 +7,9 @@ import {
   Search, HardDrive, Film, Music, ImageIcon,
   FileText, Archive, FolderOpen, Loader2, X,
   Play, Download, Trash2, MoreHorizontal,
-  CheckCircle, AlertCircle, ChevronRight
+  CheckCircle, AlertCircle, ChevronRight, Plus
 } from "lucide-react";
-import { isAuthenticated, logout, listFiles, syncFiles, getStats, uploadFile, deleteFile, FileItem, getDownloadUrl } from "@/lib/api";
+import { isAuthenticated, logout, listFiles, syncFiles, getStats, uploadFile, deleteFile, FileItem, getDownloadUrl, getThumbnailUrl } from "@/lib/api";
 import VideoPlayer from "@/components/VideoPlayer";
 import axios from "axios";
 
@@ -61,10 +61,15 @@ function FileCard({ file, index, onPlay, onDeleteRequest }: {
 }) {
   const [menu, setMenu] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [thumbLoaded, setThumbLoaded] = useState(false);
+  const [thumbError, setThumbError] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const cat = getCategory(file);
   const cfg = CAT_CONFIG[cat];
   const isMedia = ["video","audio"].includes(cat);
+  const isVideo = cat === "video";
+  const thumbUrl = isVideo ? getThumbnailUrl(file.message_id) : null;
+  const showThumb = isVideo && !thumbError;
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -92,33 +97,68 @@ function FileCard({ file, index, onPlay, onDeleteRequest }: {
       {/* Thumb */}
       <div
         className="file-card-thumb"
-        style={{ background: `linear-gradient(135deg, ${cfg.bg}, transparent)` }}
+        style={{ background: showThumb && thumbLoaded ? "transparent" : `linear-gradient(135deg, ${cfg.bg}, transparent)` }}
         onClick={() => isMedia && onPlay(file)}
       >
-        {/* Glow */}
-        <div
-          className="file-card-glow"
-          style={{ background: `radial-gradient(ellipse at 50% 50%, ${cfg.color}20, transparent 60%)` }}
-        />
+        {/* Video thumbnail */}
+        {thumbUrl && (
+          <img
+            src={thumbUrl}
+            alt={file.name}
+            onLoad={() => setThumbLoaded(true)}
+            onError={() => setThumbError(true)}
+            style={{
+              position: "absolute", inset: 0,
+              width: "100%", height: "100%",
+              objectFit: "cover",
+              opacity: thumbLoaded ? 1 : 0,
+              transition: "opacity 0.3s",
+            }}
+          />
+        )}
 
-        {/* Icon */}
-        <div
-          className="file-card-icon-wrap"
-          style={{ background: cfg.bg, border: `1px solid ${cfg.color}30` }}
-        >
-          <cfg.Icon size={24} style={{ color: cfg.color }} />
-        </div>
+        {/* Thumbnail üzerinde gradient karartma */}
+        {showThumb && thumbLoaded && (
+          <div style={{
+            position: "absolute", inset: 0,
+            background: "linear-gradient(to bottom, rgba(0,0,0,0.08), rgba(0,0,0,0.45))",
+          }} />
+        )}
 
-        {/* Category */}
+        {/* Glow (thumbnail yokken) */}
+        {(!showThumb || !thumbLoaded) && (
+          <div
+            className="file-card-glow"
+            style={{ background: `radial-gradient(ellipse at 50% 50%, ${cfg.color}20, transparent 60%)` }}
+          />
+        )}
+
+        {/* Icon (thumbnail yokken) */}
+        {(!showThumb || !thumbLoaded) && (
+          <div
+            className="file-card-icon-wrap"
+            style={{ background: cfg.bg, border: `1px solid ${cfg.color}30`, zIndex: 1 }}
+          >
+            <cfg.Icon size={24} style={{ color: cfg.color }} />
+          </div>
+        )}
+
+        {/* Kategori badge */}
         <div
           className="file-card-cat"
-          style={{ background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.color}25` }}
+          style={{
+            background: showThumb && thumbLoaded ? "rgba(0,0,0,0.55)" : cfg.bg,
+            color: showThumb && thumbLoaded ? "rgba(255,255,255,0.9)" : cfg.color,
+            border: `1px solid ${showThumb && thumbLoaded ? "rgba(255,255,255,0.15)" : `${cfg.color}25`}`,
+            backdropFilter: "blur(4px)",
+            zIndex: 2,
+          }}
         >
           {cfg.label}
         </div>
 
         {/* Actions */}
-        <div className="file-card-actions">
+        <div className="file-card-actions" style={{ zIndex: 3 }}>
           {isMedia && (
             <button className="file-card-action-btn play" onClick={(e) => { e.stopPropagation(); onPlay(file); }} title="Oynat">
               <Play size={12} fill="white" color="white" />
@@ -255,7 +295,7 @@ export default function HomePage() {
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault(); setDragging(false);
-    if (e.dataTransfer.files.length) processFiles(e.dataTransfer.files);
+    if (e.dataTransfer.files.length) handleFilesSelected(e.dataTransfer.files);
   }, [folder]);
 
   const filteredFiles = files.filter(f => folder === "/" ? true : f.folder === folder);
@@ -367,8 +407,8 @@ export default function HomePage() {
             />
           </div>
 
-          {/* Category chips (desktop) */}
-          <div style={{ display: "flex", gap: 4, overflow: "hidden" }}>
+          {/* Category chips (masaüstü — mobilde gizlenir, bottom nav kullanılır) */}
+          <div className="topbar-cats" style={{ display: "flex", gap: 4, overflow: "hidden" }}>
             {CATS.slice(0, 5).map(({ id, label, Icon }) => (
               <button
                 key={id}
@@ -387,7 +427,7 @@ export default function HomePage() {
               id="sync-btn"
               onClick={handleSync}
               disabled={syncing}
-              className="btn btn-secondary btn-icon"
+              className="btn btn-secondary btn-icon topbar-sync"
               title="Senkronize"
             >
               <RefreshCw size={14} className={syncing ? "spin" : ""} />
@@ -395,7 +435,7 @@ export default function HomePage() {
             <button
               id="upload-btn"
               onClick={() => document.getElementById("main-file-input")?.click()}
-              className="btn btn-primary"
+              className="btn btn-primary topbar-upload"
             >
               <Upload size={14} /> Yükle
             </button>
@@ -678,6 +718,37 @@ export default function HomePage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ── Bottom Navigation — sadece mobilde görünür ── */}
+      <nav className="bottom-nav">
+        <div className="bottom-nav-inner">
+          {[
+            { id: "",         label: "Tümü",   Icon: HardDrive },
+            { id: "video",    label: "Video",   Icon: Film },
+            { id: "image",    label: "Görsel",  Icon: ImageIcon },
+            { id: "audio",    label: "Ses",     Icon: Music },
+            { id: "document", label: "Belge",   Icon: FileText },
+          ].map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              onClick={() => handleCatChange(id)}
+              className={`bottom-nav-item ${category === id ? "active" : ""}`}
+            >
+              <Icon size={22} />
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
+      </nav>
+
+      {/* ── FAB — mobil yükleme butonu ── */}
+      <button
+        className="fab-upload"
+        onClick={() => document.getElementById("main-file-input")?.click()}
+        aria-label="Dosya Yükle"
+      >
+        <Plus size={22} />
+      </button>
     </div>
   );
 }

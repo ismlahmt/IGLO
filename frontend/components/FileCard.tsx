@@ -5,24 +5,24 @@ import {
   Play, Download, Trash2, MoreVertical
 } from "lucide-react";
 import { useState } from "react";
-import { FileItem, deleteFile, getDownloadUrl } from "@/lib/api";
+import { FileItem, deleteFile, getDownloadUrl, getThumbnailUrl } from "@/lib/api";
 
 const CATEGORY_ICONS: Record<string, React.ElementType> = {
-  video: Film,
-  audio: Music,
-  image: Image,
+  video:    Film,
+  audio:    Music,
+  image:    Image,
   document: FileText,
-  archive: Archive,
-  other: File,
+  archive:  Archive,
+  other:    File,
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
-  video: "#6366f1",
-  audio: "#8b5cf6",
-  image: "#22d3a0",
+  video:    "#6366f1",
+  audio:    "#8b5cf6",
+  image:    "#22d3a0",
   document: "#f59e0b",
-  archive: "#f43f5e",
-  other: "#9898b0",
+  archive:  "#f43f5e",
+  other:    "#9898b0",
 };
 
 function formatSize(bytes: number): string {
@@ -34,7 +34,7 @@ function formatSize(bytes: number): string {
 
 function getCategory(file: FileItem): string {
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-  if (["mp4", "mkv", "avi", "mov", "webm", "m4v"].includes(ext)) return "video";
+  if (["mp4", "mkv", "avi", "mov", "webm", "m4v", "flv", "wmv"].includes(ext)) return "video";
   if (["mp3", "flac", "wav", "ogg", "aac", "m4a"].includes(ext)) return "audio";
   if (["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext)) return "image";
   if (["pdf", "doc", "docx", "txt", "xls", "xlsx"].includes(ext)) return "document";
@@ -50,13 +50,21 @@ interface FileCardProps {
 }
 
 export default function FileCard({ file, onPlay, onDelete, index }: FileCardProps) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const category = getCategory(file);
-  const Icon = CATEGORY_ICONS[category] ?? File;
-  const color = CATEGORY_COLORS[category] ?? "#9898b0";
+  const [menuOpen, setMenuOpen]       = useState(false);
+  const [deleting, setDeleting]       = useState(false);
+  const [thumbError, setThumbError]   = useState(false);   // thumbnail yüklenemezse icon'a geri dön
+  const [thumbLoaded, setThumbLoaded] = useState(false);
+
+  const category   = getCategory(file);
+  const Icon       = CATEGORY_ICONS[category] ?? File;
+  const color      = CATEGORY_COLORS[category] ?? "#9898b0";
   const isPlayable = ["video", "audio"].includes(category);
-  const date = new Date(file.date);
+  const isVideo    = category === "video";
+  const date       = new Date(file.date);
+
+  // Thumbnail URL — yalnızca video için dene
+  const thumbUrl = isVideo ? getThumbnailUrl(file.message_id) : null;
+  const showThumb = isVideo && !thumbError;
 
   async function handleDelete() {
     if (!confirm(`"${file.name}" silinsin mi?`)) return;
@@ -78,41 +86,83 @@ export default function FileCard({ file, onPlay, onDelete, index }: FileCardProp
       transition={{ delay: index * 0.03, duration: 0.25 }}
       layout
     >
-      {/* Thumbnail / Icon */}
+      {/* ── Thumbnail / Icon Alanı ── */}
       <div
-        className="flex items-center justify-center relative"
+        className="flex items-center justify-center relative overflow-hidden"
         style={{
           height: 140,
-          background: `radial-gradient(circle at 30% 30%, ${color}18, ${color}05)`,
+          background: showThumb && thumbLoaded
+            ? "transparent"
+            : `radial-gradient(circle at 30% 30%, ${color}18, ${color}05)`,
+          cursor: isPlayable ? "pointer" : "default",
         }}
         onClick={() => isPlayable && onPlay(file)}
       >
-        <div
-          className="w-14 h-14 rounded-2xl flex items-center justify-center"
-          style={{ background: `${color}18`, border: `1px solid ${color}30` }}
-        >
-          <Icon size={28} style={{ color }} />
-        </div>
+        {/* Video thumbnail resmi */}
+        {thumbUrl && (
+          <img
+            src={thumbUrl}
+            alt={file.name}
+            onLoad={() => setThumbLoaded(true)}
+            onError={() => setThumbError(true)}
+            style={{
+              position: "absolute", inset: 0,
+              width: "100%", height: "100%",
+              objectFit: "cover",
+              opacity: thumbLoaded ? 1 : 0,
+              transition: "opacity 0.3s",
+            }}
+          />
+        )}
 
-        {/* Play button overlay */}
+        {/* Thumbnail yüklenene kadar veya yoksa icon göster */}
+        {(!showThumb || !thumbLoaded) && (
+          <div
+            className="w-14 h-14 rounded-2xl flex items-center justify-center"
+            style={{ background: `${color}18`, border: `1px solid ${color}30`, zIndex: 1 }}
+          >
+            <Icon size={28} style={{ color }} />
+          </div>
+        )}
+
+        {/* Thumbnail üzerine hafif gradient karartma (daha iyi okunabilirlik) */}
+        {showThumb && thumbLoaded && (
+          <div style={{
+            position: "absolute", inset: 0,
+            background: "linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.35) 100%)",
+          }} />
+        )}
+
+        {/* Play overlay — hover'da beliriyor */}
         {isPlayable && (
-          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-            style={{ background: "rgba(0,0,0,0.5)" }}>
-            <div className="w-12 h-12 rounded-full flex items-center justify-center"
-              style={{ background: "rgba(99,102,241,0.9)" }}>
-              <Play size={20} fill="white" color="white" className="ml-0.5" />
+          <div
+            className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+            style={{ background: "rgba(0,0,0,0.4)", zIndex: 2 }}
+          >
+            <div
+              className="w-12 h-12 rounded-full flex items-center justify-center"
+              style={{ background: "rgba(99,102,241,0.9)" }}
+            >
+              <Play size={20} fill="white" color="white" style={{ marginLeft: 2 }} />
             </div>
           </div>
         )}
 
-        {/* Category badge */}
-        <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full text-xs font-medium"
-          style={{ background: `${color}20`, color, border: `1px solid ${color}30` }}>
+        {/* Kategori badge */}
+        <div
+          className="absolute top-2 left-2 px-2 py-0.5 rounded-full text-xs font-medium"
+          style={{
+            background: showThumb && thumbLoaded ? "rgba(0,0,0,0.55)" : `${color}20`,
+            color: showThumb && thumbLoaded ? "rgba(255,255,255,0.9)" : color,
+            border: `1px solid ${showThumb && thumbLoaded ? "rgba(255,255,255,0.15)" : `${color}30`}`,
+            zIndex: 3, backdropFilter: "blur(4px)",
+          }}
+        >
           {category}
         </div>
 
-        {/* More menu */}
-        <div className="absolute top-2 right-2">
+        {/* Daha fazla menü */}
+        <div className="absolute top-2 right-2" style={{ zIndex: 4 }}>
           <button
             id={`file-menu-${file.message_id}`}
             onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen); }}
@@ -160,7 +210,7 @@ export default function FileCard({ file, onPlay, onDelete, index }: FileCardProp
         </div>
       </div>
 
-      {/* Info */}
+      {/* ── Dosya Bilgisi ── */}
       <div className="p-3">
         <p
           className="text-sm font-medium truncate mb-1"

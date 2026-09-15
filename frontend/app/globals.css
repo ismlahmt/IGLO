@@ -659,3 +659,146 @@ body::before {
 .ctx-item.danger { color: var(--rose); }
 .ctx-item.danger:hover { background: var(--rose-dim); }
 .ctx-divider { height: 1px; background: var(--border-subtle); margin: 4px 0; }
+
+/* ══════════════════════════════════════════════════════
+   📱 MOBİL RESPONSIVE  ≤ 768 px
+══════════════════════════════════════════════════════ */
+
+/* ── Sidebar tamamen gizlenir ── */
+@media (max-width: 768px) {
+  .sidebar { display: none !important; }
+}
+
+/* ── Layout ── */
+@media (max-width: 768px) {
+  .app-layout  { flex-direction: column; }
+  .main        { padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px)); }
+  .content     { padding: 12px 14px 16px; }
+}
+
+/* ── Topbar — mobilden gizlenecek elemanlar ── */
+@media (max-width: 768px) {
+  .topbar-cats   { display: none !important; }
+  .topbar-sync   { display: none !important; }
+  .topbar-upload { display: none !important; }
+  .topbar        { padding: 10px 14px; gap: 8px; }
+  /* iOS zoom önle (font-size < 16px form elementi zoom yapar) */
+  .search-input  { font-size: 16px !important; }
+}
+
+/* ── File Grid — 2 sütun ── */
+@media (max-width: 768px) {
+  .file-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+}
+
+/* ── Orbs boyutlarını küçült (performans) ── */
+@media (max-width: 768px) {
+  .orb-1 { width: 300px; height: 300px; top: -150px; left: -100px; }
+  .orb-2 { width: 200px; height: 200px; }
+  .orb-3 { display: none; }
+}
+
+/* ── Touch-friendly boyutlar ── */
+@media (max-width: 768px) {
+  .file-card-action-btn { width: 34px; height: 34px; }
+  .btn                  { padding: 9px 16px; font-size: 14px; }
+}
+
+/* ══════════════════════════════════════════════════════
+   📱 BOTTOM NAVIGATION
+══════════════════════════════════════════════════════ */
+.bottom-nav {
+  display: none;
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  background: rgba(6,6,14,0.97);
+  border-top: 1px solid var(--border-subtle);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  z-index: 60;
+  /* iPhone safe area (home indicator) */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.bottom-nav-inner {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-around;
+  height: 60px;
+  padding: 0 4px;
+}
+
+.bottom-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-3);
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+  padding: 6px 2px;
+  transition: color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.bottom-nav-item svg { transition: transform 0.15s; }
+.bottom-nav-item:active svg { transform: scale(0.85); }
+.bottom-nav-item.active      { color: var(--purple); }
+.bottom-nav-item.active svg  { filter: drop-shadow(0 0 6px var(--purple-glow)); }
+
+@media (max-width: 768px) {
+  .bottom-nav { display: block; }
+}
+
+/* ══════════════════════════════════════════════════════
+   📱 FAB — Floating Action Button (yükleme)
+══════════════════════════════════════════════════════ */
+.fab-upload {
+  display: none;
+  position: fixed;
+  right: 20px;
+  bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--purple) 0%, var(--violet) 100%);
+  align-items: center;
+  justify-content: center;
+  box-shadow:
+    0 4px 20px var(--purple-glow),
+    0 0 0 1px rgba(255,255,255,0.12) inset;
+  z-index: 55;
+  border: none;
+  cursor: pointer;
+  color: white;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.fab-upload:active {
+  transform: scale(0.88);
+  box-shadow: 0 2px 10px var(--purple-glow);
+}
+
+@media (max-width: 768px) {
+  .fab-upload { display: flex; }
+}
+
+/* ══════════════════════════════════════════════════════
+   📱 MOBİL VIDEO OYNATICI
+══════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  /* Progress bar daha kolay dokunulabilir olsun */
+  input[type=range] { min-height: 20px; }
+}
+
