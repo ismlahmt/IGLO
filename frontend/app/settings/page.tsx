@@ -1,9 +1,9 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { motion } from "framer-motion";
 import { ArrowLeft, Shield, Key, Server, RefreshCw, Loader2, CheckCircle, Database } from "lucide-react";
 import { syncFiles } from "@/lib/api";
+import { motion } from "framer-motion";
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -24,137 +24,117 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="min-h-screen p-4 md:p-8 relative z-10" style={{ background: "var(--bg-0)" }}>
-      <div className="max-w-3xl mx-auto">
-        <button
+    <div style={{ background: "var(--bg-0)", minHeight: "100vh", padding: "40px 20px" }}>
+      <div style={{ maxWidth: 800, margin: "0 auto" }}>
+        
+        <button 
+          className="btn btn-secondary" 
           onClick={() => router.push("/")}
-          className="flex items-center gap-2 mb-8 text-sm hover:text-white transition-colors"
-          style={{ color: "var(--text-muted)" }}
+          style={{ marginBottom: 30, display: "inline-flex", alignItems: "center", gap: 8 }}
         >
           <ArrowLeft size={16} /> Geri Dön
         </button>
 
-        <div className="mb-10">
-          <h1 className="text-3xl font-bold tracking-tight mb-2 text-white">Sistem Ayarları</h1>
-          <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+        <div style={{ marginBottom: 40 }}>
+          <h1 className="gradient-text" style={{ fontSize: 32, fontWeight: 800, letterSpacing: "-0.5px", marginBottom: 8 }}>Sistem Ayarları</h1>
+          <p style={{ color: "var(--text-3)", fontSize: 14 }}>
             IGLO kişisel bulutunuzun yapılandırma ve yönetim paneli
           </p>
         </div>
 
-        <div className="grid gap-6">
-          {/* Sync */}
-          <motion.div
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="rounded-2xl p-6 border transition-colors hover:border-gray-700"
-            style={{ background: "var(--bg-1)", borderColor: "var(--border-default)" }}
-          >
-            <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
-              <div>
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-indigo-500/10 border border-indigo-500/20">
-                    <Database size={20} className="text-indigo-400" />
+        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+          
+          {/* Sync Card */}
+          <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} className="glass-card" style={{ padding: 24 }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 20 }}>
+              <div style={{ flex: "1 1 300px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+                  <div style={{ width: 42, height: 42, borderRadius: 12, background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <Database size={20} style={{ color: "#818cf8" }} />
                   </div>
                   <div>
-                    <h2 className="font-semibold text-white">Veritabanı Senkronizasyonu</h2>
-                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>Telegram kanalından dosyaları kurtar</p>
+                    <h2 style={{ fontSize: 16, fontWeight: 600, color: "var(--text-1)", margin: 0 }}>Veritabanı Senkronizasyonu</h2>
+                    <p style={{ fontSize: 12, color: "var(--text-3)", margin: 0, marginTop: 2 }}>Telegram kanalından dosyaları kurtar</p>
                   </div>
                 </div>
-                <p className="text-sm mt-4 leading-relaxed" style={{ color: "var(--text-secondary)" }}>
-                  Eğer veritabanınız silinirse veya başka bir bilgisayara geçiş yaparsanız, bu özellik sayesinde Telegram'daki tüm dosyalarınızı saniyeler içinde sisteme geri çekebilirsiniz. İşlem sırasında verileriniz asla kaybolmaz.
+                <p style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.6, marginBottom: 16 }}>
+                  Eğer veritabanınız silinirse veya başka bir cihaza geçerseniz, bu özellik sayesinde Telegram'daki tüm dosyalarınızı saniyeler içinde sisteme geri çekebilirsiniz. İşlem sırasında verileriniz asla kaybolmaz.
                 </p>
                 {syncMsg && (
-                  <p className="text-sm mt-3 flex items-center gap-2 text-emerald-400 bg-emerald-400/10 w-fit px-3 py-1.5 rounded-lg border border-emerald-400/20">
-                    <CheckCircle size={14} /> {syncMsg}
-                  </p>
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 8, color: "var(--emerald)", fontSize: 13 }}>
+                    <CheckCircle size={16} /> {syncMsg}
+                  </div>
                 )}
               </div>
-              
-              <button
-                onClick={handleFullSync}
+              <button 
+                className="btn btn-primary" 
+                onClick={handleFullSync} 
                 disabled={syncing}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium transition-all shrink-0 bg-indigo-500 hover:bg-indigo-600 text-white disabled:opacity-50"
+                style={{ padding: "12px 20px" }}
               >
-                {syncing ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                {syncing ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
                 {syncing ? "Taranıyor..." : "Şimdi Senkronize Et"}
               </button>
             </div>
           </motion.div>
 
-          {/* Security */}
-          <motion.div
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="rounded-2xl p-6 border transition-colors hover:border-gray-700"
-            style={{ background: "var(--bg-1)", borderColor: "var(--border-default)" }}
-          >
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-emerald-500/10 border border-emerald-500/20">
-                <Shield size={20} className="text-emerald-400" />
+          {/* Security Card */}
+          <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="glass-card" style={{ padding: 24 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+              <div style={{ width: 42, height: 42, borderRadius: 12, background: "rgba(16,185,129,0.15)", border: "1px solid rgba(16,185,129,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Shield size={20} style={{ color: "#34d399" }} />
               </div>
               <div>
-                <h2 className="font-semibold text-white">Güvenlik ve Şifreleme</h2>
-                <p className="text-xs" style={{ color: "var(--text-muted)" }}>Sistem koruma durumu</p>
+                <h2 style={{ fontSize: 16, fontWeight: 600, color: "var(--text-1)", margin: 0 }}>Güvenlik ve Şifreleme</h2>
+                <p style={{ fontSize: 12, color: "var(--text-3)", margin: 0, marginTop: 2 }}>Sistem koruma durumu</p>
               </div>
             </div>
             
-            <div className="grid sm:grid-cols-2 gap-4">
-              <div className="p-4 rounded-xl flex items-center justify-between border" style={{ background: "var(--bg-2)", borderColor: "var(--border-subtle)" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 16 }}>
+              <div style={{ padding: 16, borderRadius: 12, background: "var(--bg-2)", border: "1px solid var(--border-subtle)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div>
-                  <p className="text-sm font-medium text-white">AES-256 Şifreleme</p>
-                  <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>Tüm dosyalar kilitli</p>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text-1)", marginBottom: 4 }}>AES-256 Şifreleme</div>
+                  <div style={{ fontSize: 12, color: "var(--text-3)" }}>Tüm dosyalar kilitli</div>
                 </div>
-                <div className="px-2.5 py-1 rounded-md text-[10px] font-bold tracking-wide uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  Aktif
-                </div>
+                <div className="badge badge-success" style={{ fontWeight: 700, fontSize: 11, padding: "4px 8px" }}>AKTİF</div>
               </div>
-              <div className="p-4 rounded-xl flex items-center justify-between border" style={{ background: "var(--bg-2)", borderColor: "var(--border-subtle)" }}>
+              <div style={{ padding: 16, borderRadius: 12, background: "var(--bg-2)", border: "1px solid var(--border-subtle)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div>
-                  <p className="text-sm font-medium text-white">JWT Kimlik Doğrulama</p>
-                  <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>24 saatlik oturum</p>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text-1)", marginBottom: 4 }}>JWT Kimlik Doğrulama</div>
+                  <div style={{ fontSize: 12, color: "var(--text-3)" }}>24 saatlik oturum</div>
                 </div>
-                <div className="px-2.5 py-1 rounded-md text-[10px] font-bold tracking-wide uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  Aktif
-                </div>
+                <div className="badge badge-success" style={{ fontWeight: 700, fontSize: 11, padding: "4px 8px" }}>AKTİF</div>
               </div>
             </div>
           </motion.div>
 
-          {/* Telegram */}
-          <motion.div
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="rounded-2xl p-6 border transition-colors hover:border-gray-700"
-            style={{ background: "var(--bg-1)", borderColor: "var(--border-default)" }}
-          >
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-blue-500/10 border border-blue-500/20">
-                <Server size={20} className="text-blue-400" />
+          {/* Telegram Channel Card */}
+          <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="glass-card" style={{ padding: 24 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+              <div style={{ width: 42, height: 42, borderRadius: 12, background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Server size={20} style={{ color: "#60a5fa" }} />
               </div>
               <div>
-                <h2 className="font-semibold text-white">Telegram Bağlantısı</h2>
-                <p className="text-xs" style={{ color: "var(--text-muted)" }}>Depolama kanalı yapılandırması</p>
+                <h2 style={{ fontSize: 16, fontWeight: 600, color: "var(--text-1)", margin: 0 }}>Telegram Bağlantısı</h2>
+                <p style={{ fontSize: 12, color: "var(--text-3)", margin: 0, marginTop: 2 }}>Depolama kanalı yapılandırması</p>
               </div>
             </div>
             
-            <div className="p-4 rounded-xl border" style={{ background: "var(--bg-2)", borderColor: "var(--border-subtle)" }}>
-              <label className="block text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>
-                Bağlı Kanal ID
-              </label>
-              <input
-                type="text"
-                className="w-full bg-black/50 border border-gray-800 rounded-lg px-4 py-2.5 text-sm text-gray-400 outline-none"
-                placeholder="-100xxxxxxxxxx"
-                value="[GİZLİ]"
-                disabled
+            <div style={{ padding: 16, borderRadius: 12, background: "var(--bg-2)", border: "1px solid var(--border-subtle)" }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "var(--text-2)", marginBottom: 8 }}>Bağlı Kanal ID</label>
+              <input 
+                className="input" 
+                type="text" 
+                value="[GİZLİ]" 
+                disabled 
+                style={{ padding: "10px 14px", borderRadius: 8, color: "var(--text-3)", opacity: 0.7 }}
               />
-              <p className="text-xs mt-3 flex items-center gap-2" style={{ color: "var(--text-muted)" }}>
-                Kanalı değiştirmek için ana dizindeki <code className="bg-gray-800/50 px-1.5 py-0.5 rounded text-gray-300">.env</code> dosyasını düzenleyin.
+              <p style={{ fontSize: 12, color: "var(--text-3)", marginTop: 12, marginBottom: 0 }}>
+                Kanalı değiştirmek için ana dizindeki <code style={{ background: "var(--bg-1)", padding: "2px 6px", borderRadius: 4, border: "1px solid var(--border-subtle)" }}>.env</code> dosyasını düzenleyin.
               </p>
             </div>
           </motion.div>
+
         </div>
       </div>
     </div>
