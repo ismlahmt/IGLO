@@ -126,7 +126,7 @@ export default function DropZone({ currentFolder, onUploadComplete }: DropZonePr
           <p className="font-semibold mb-1" style={{ color: "var(--text-primary)" }}>
             {dragging ? "Bırak!" : "Dosyaları buraya sürükle"}
           </p>
-          <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+          <p className="text-sm" >
             ya da seçmek için tıkla • Her boyutta dosya desteklenir
           </p>
           <div className="flex items-center gap-1.5 justify-center mt-3">
@@ -159,7 +159,7 @@ export default function DropZone({ currentFolder, onUploadComplete }: DropZonePr
                   {u.status === "uploading" && <Loader2 size={16} className="animate-spin" style={{ color: "var(--accent)" }} />}
                   {u.status === "done" && <CheckCircle size={16} style={{ color: "var(--success)" }} />}
                   {u.status === "error" && <AlertCircle size={16} style={{ color: "var(--danger)" }} />}
-                  {u.status === "canceled" && <AlertCircle size={16} style={{ color: "var(--text-muted)" }} />}
+                  {u.status === "canceled" && <AlertCircle size={16}  />}
                   {u.status === "pending" && <div className="w-4 h-4 rounded-full" style={{ border: "2px solid var(--border)" }} />}
                 </div>
 
@@ -196,12 +196,12 @@ export default function DropZone({ currentFolder, onUploadComplete }: DropZonePr
                     <p className="text-xs mt-0.5 truncate" style={{ color: "var(--danger)" }}>{u.error}</p>
                   )}
                   {u.status === "canceled" && (
-                    <p className="text-xs mt-0.5 truncate" style={{ color: "var(--text-muted)" }}>İptal edildi</p>
+                    <p className="text-xs mt-0.5 truncate" >İptal edildi</p>
                   )}
                 </div>
 
                 {/* Size */}
-                <span className="text-xs flex-shrink-0" style={{ color: "var(--text-muted)" }}>
+                <span className="text-xs flex-shrink-0" >
                   {(u.file.size / 1024 / 1024).toFixed(1)} MB
                 </span>
 
@@ -209,9 +209,9 @@ export default function DropZone({ currentFolder, onUploadComplete }: DropZonePr
                 {(u.status === "pending" || u.status === "uploading" || u.status === "done" || u.status === "error" || u.status === "canceled") && (
                   <button
                     onClick={(e) => { e.stopPropagation(); handleCancelOrRemove(u); }}
-                    className="p-1 rounded hover:bg-white/10 transition-colors"
+                    className="p-1 rounded hover:bg-red-500/20 hover:text-red-500 text-gray-400 transition-colors"
                     title={u.status === "uploading" ? "İptal et" : "Kaldır"}
-                    style={{ color: "var(--text-muted)" }}
+                    
                   >
                     <X size={14} />
                   </button>

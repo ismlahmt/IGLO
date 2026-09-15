@@ -127,7 +127,7 @@ def _run_ffmpeg(ffmpeg: str, input_url: str, output_path: str) -> bool:
             return False
 
     # Deneme 1: 1. saniye (karanlık başlangıç sahnelerini atla)
-    if attempt(["-ss", "00:00:01"]):
+    if attempt(["-ss", "00:00:05"]) or attempt(["-ss", "00:00:01"]):
         return True
 
     # Deneme 2: İlk kare (bazı videolar 1 sn'den kısa olabilir)
