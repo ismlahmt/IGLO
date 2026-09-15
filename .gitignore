@@ -37,3 +37,6 @@ Thumbs.db
 *.swo
 .idea/
 .vscode/settings.json
+backend/thumbnails/*.jpg
+backend/thumbnails/*.png
+backend/thumbnails/*.webp
