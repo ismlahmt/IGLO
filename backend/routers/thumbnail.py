@@ -138,10 +138,12 @@ def _run_ffmpeg(ffmpeg: str, input_url: str, output_path: str) -> bool:
     return False
 
 
+from fastapi import Query
 @router.get("/{message_id}/thumbnail")
 async def get_thumbnail(
     message_id: int,
-    token: str = Depends(get_current_user_query),
+    _: str = Depends(get_current_user_query),
+    token: str = Query(..., alias="token")
 ):
     """
     Video thumbnail endpoint.
