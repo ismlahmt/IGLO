@@ -369,65 +369,51 @@ async def download_file_bytes(message_id: int) -> bytes:
 
 # ── Streaming (LRU cache ile) ─────────────────────────────────────────────────
 
+
 async def stream_file_chunks(
     message_id: int,
     start: int = 0,
     end: Optional[int] = None,
 ) -> AsyncGenerator[bytes, None]:
-    """
-    Video/Audio streaming — chunk başına LRU cache kullanır.
-    - Cache hit  → Telegram API çağrısı yapılmaz, anlık yanıt (seek hızlı).
-    - Cache miss → Telegram'dan çekilir, cache'e yazılır.
-    """
     client = await get_client()
     settings = get_settings()
     file_item = cache_service.get_file(message_id)
 
-    # Mesaj objesini cache'le
     if message_id not in _MSG_CACHE:
         _MSG_CACHE[message_id] = await client.get_messages(
             settings.telegram_channel_id, message_id
         )
     msg = _MSG_CACHE[message_id]
 
-    # end belirtilmemişse dosyanın sonuna kadar aktar
     file_size = file_item.size if file_item else 0
     if end is None:
         end = max(file_size - 1, 0)
 
-    # ── Şifresiz dosya ────────────────────────────────────────────────────────
+    # Şifresiz dosya
     if not file_item or not file_item.encrypted:
         first_chunk = start // STREAM_CHUNK_SIZE
         last_chunk  = end   // STREAM_CHUNK_SIZE
-
-        for chunk_idx in range(first_chunk, last_chunk + 1):
-            chunk = await _get_chunk(client, msg, message_id, chunk_idx)
-            if not chunk:
-                break
-
-            # Sonraki chunk'ları arka planda indir
-            _schedule_prefetch(client, msg, message_id, chunk_idx)
-
+        limit_chunks = last_chunk - first_chunk + 1
+        
+        chunk_idx = first_chunk
+        async for chunk in client.stream_media(msg, offset=first_chunk, limit=limit_chunks):
             chunk_start = chunk_idx * STREAM_CHUNK_SIZE
             slice_start = max(0, start - chunk_start) if chunk_idx == first_chunk else 0
-            slice_end   = (
-                min(len(chunk), end - chunk_start + 1)
-                if chunk_idx == last_chunk else len(chunk)
-            )
-
+            slice_end   = min(len(chunk), end - chunk_start + 1) if chunk_idx == last_chunk else len(chunk)
+            
             if slice_start < slice_end:
                 yield chunk[slice_start:slice_end]
+            chunk_idx += 1
         return
 
-    # ── Şifreli (AES-CTR) dosya ───────────────────────────────────────────────
-    # Telegram'daki gerçek byte konumları: nonce (16B) + şifreli veri
+    # Şifreli dosya
     actual_start = start + 16
     actual_end   = end   + 16
 
     first_chunk = actual_start // STREAM_CHUNK_SIZE
     last_chunk  = actual_end   // STREAM_CHUNK_SIZE
+    limit_chunks = last_chunk - first_chunk + 1
 
-    # Nonce'u bul (checksum'dan veya chunk 0'dan)
     nonce = b""
     if file_item.checksum and file_item.checksum.startswith("aes-ctr:"):
         try:
@@ -437,61 +423,38 @@ async def stream_file_chunks(
             pass
 
     if not nonce:
-        # Chunk 0 zaten cache'de olabilir (önceki oynatmadan)
-        chunk0 = await _get_chunk(client, msg, message_id, 0)
-        if len(chunk0) >= 16:
-            nonce = chunk0[:16]
-            nonce_b64 = base64.b64encode(nonce).decode()
-            file_item.checksum = f"aes-ctr:{nonce_b64}:" + (file_item.checksum or "")
-
-    # Seekable AES-CTR decryptor oluştur
-    decryptor = None
-    discard = 0
-    if nonce and len(nonce) >= 16:
-        decryptor, discard = crypto_service.get_seekable_decryptor(nonce, start)
-
-    first_yield = True
-
-    for chunk_idx in range(first_chunk, last_chunk + 1):
-        chunk = await _get_chunk(client, msg, message_id, chunk_idx)
-        if not chunk:
-            break
-
-        # Sonraki chunk'ları arka planda indir
-        _schedule_prefetch(client, msg, message_id, chunk_idx)
-
-        chunk_start = chunk_idx * STREAM_CHUNK_SIZE
-
-        # Eğer chunk 0'dan nonce henüz alınmamışsa al
-        if not nonce and chunk_idx == 0 and first_yield:
-            if len(chunk) >= 16:
-                nonce = chunk[:16]
+        async for chunk0 in client.stream_media(msg, offset=0, limit=1):
+            if len(chunk0) >= 16:
+                nonce = chunk0[:16]
                 nonce_b64 = base64.b64encode(nonce).decode()
                 file_item.checksum = f"aes-ctr:{nonce_b64}:" + (file_item.checksum or "")
-                decryptor, discard = crypto_service.get_seekable_decryptor(nonce, start)
+            break
+            
+    if not nonce or len(nonce) < 16:
+        return
 
+    decryptor, discard = crypto_service.get_seekable_decryptor(nonce, start)
+    first_yield = True
+
+    chunk_idx = first_chunk
+    async for chunk in client.stream_media(msg, offset=first_chunk, limit=limit_chunks):
+        chunk_start = chunk_idx * STREAM_CHUNK_SIZE
+        
         slice_start = max(0, actual_start - chunk_start) if chunk_idx == first_chunk else 0
-        slice_end   = (
-            min(len(chunk), actual_end - chunk_start + 1)
-            if chunk_idx == last_chunk else len(chunk)
-        )
+        slice_end   = min(len(chunk), actual_end - chunk_start + 1) if chunk_idx == last_chunk else len(chunk)
 
-        if slice_start >= slice_end:
-            continue
-
-        data_to_decrypt = chunk[slice_start:slice_end]
-
-        if decryptor:
+        if slice_start < slice_end:
+            data_to_decrypt = chunk[slice_start:slice_end]
             decrypted = decryptor.update(data_to_decrypt)
-        else:
-            decrypted = data_to_decrypt  # Fallback
-
-        if first_yield:
-            decrypted = decrypted[discard:]
-            first_yield = False
-
-        if decrypted:
-            yield decrypted
+            
+            if first_yield:
+                decrypted = decrypted[discard:]
+                first_yield = False
+                
+            if decrypted:
+                yield decrypted
+                
+        chunk_idx += 1
 
 
 # ── Delete ────────────────────────────────────────────────────────────────────
