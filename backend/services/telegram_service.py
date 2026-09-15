@@ -264,26 +264,32 @@ async def sync_from_telegram(full_refresh: bool = False):
     client = await get_client()
     settings = get_settings()
 
-    if full_refresh:
-        cache_service.clear_cache()
-
     last_id = 0 if full_refresh else cache_service.get_last_message_id()
     channel_id = settings.telegram_channel_id
     new_files = []
 
-    async for message in client.get_chat_history(channel_id):
-        if message.id <= last_id:
-            break
-        if not message.caption:
-            continue
+    try:
+        async for message in client.get_chat_history(channel_id):
+            if message.id <= last_id:
+                break
+            if not message.caption:
+                continue
 
-        file_item = _parse_caption(message.caption)
-        if file_item is None:
-            continue
+            file_item = _parse_caption(message.caption)
+            if file_item is None:
+                continue
 
-        file_item.message_id = message.id
+            file_item.message_id = message.id
+            new_files.append(file_item)
+    except Exception as e:
+        print(f"Sync error during chat history: {e}")
+        # Ignore and process what we have so far
+
+    if full_refresh:
+        cache_service.clear_cache()
+
+    for file_item in new_files:
         cache_service.add_file(file_item)
-        new_files.append(file_item)
 
     if new_files:
         cache_service.set_last_message_id(new_files[0].message_id)
@@ -427,7 +433,7 @@ async def stream_file_chunks(
             if len(chunk0) >= 16:
                 nonce = chunk0[:16]
                 nonce_b64 = base64.b64encode(nonce).decode()
-                file_item.checksum = f"aes-ctr:{nonce_b64}:" + (file_item.checksum or ""); cache_service.add_file(file_item)
+                file_item.checksum = f"aes-ctr:{nonce_b64}:" + (file_item.checksum or ""); 
             break
             
     if not nonce or len(nonce) < 16:

@@ -54,7 +54,7 @@ interface UploadItem {
 }
 
 /* ── File card ────────────────────────────────── */
-function FileCard({ file, index, onPlay, onDeleteRequest }: {
+function FileCard({ file, index, onPlay, onDeleteRequest, onRenameRequest }: {
   file: FileItem; index: number;
   onPlay: (f: FileItem) => void;
   onDeleteRequest: (f: FileItem) => void;
@@ -207,6 +207,10 @@ export default function HomePage() {
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [playingFile, setPlayingFile] = useState<FileItem | null>(null);
   const [fileToDelete, setFileToDelete] = useState<FileItem | null>(null);
+  const [fileToRename, setFileToRename] = useState<FileItem | null>(null);
+  const [newName, setNewName] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isRenaming, setIsRenaming] = useState(false);
   const [stats, setStats] = useState<{ total_files: number; total_size: number } | null>(null);
   const [folder, setFolder] = useState("/");
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -532,7 +536,77 @@ export default function HomePage() {
         </div>
       </main>
 
-      {/* Upload Manager (Floating Bottom Right) */}
+      
+        {/* Rename Modal */}
+        <AnimatePresence>
+          {fileToRename && (
+            <motion.div
+              className="modal-overlay"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => !isRenaming && setFileToRename(null)}
+            >
+              <motion.div
+                className="modal-content"
+                initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                onClick={e => e.stopPropagation()}
+                style={{ padding: 24, maxWidth: 380, width: "100%" }}
+              >
+                <h3 style={{ fontSize: 16, fontWeight: 600, color: "var(--text-1)", marginBottom: 16 }}>İsim Değiştir</h3>
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  disabled={isRenaming}
+                  className="input-field"
+                  style={{ width: "100%", marginBottom: 20 }}
+                  autoFocus
+                />
+                <div style={{ display: "flex", gap: 12 }}>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ flex: 1 }}
+                    onClick={() => setFileToRename(null)}
+                    disabled={isRenaming}
+                  >
+                    İptal
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    style={{ flex: 1 }}
+                    disabled={isRenaming || !newName.trim() || newName.trim() === fileToRename.name}
+                    onClick={async () => {
+                      setIsRenaming(true);
+                      try {
+                        const token = localStorage.getItem("iglo_token");
+                        const res = await fetch(`/api/files/${fileToRename.message_id}/rename`, {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+                          body: JSON.stringify({ new_name: newName.trim() })
+                        });
+                        if (!res.ok) throw new Error();
+                        
+                        setFiles(prev => prev.map(f => f.message_id === fileToRename.message_id ? { ...f, name: newName.trim() } : f));
+                        setFileToRename(null);
+                      } catch {
+                        alert("İsim değiştirilemedi.");
+                      } finally {
+                        setIsRenaming(false);
+                      }
+                    }}
+                  >
+                    {isRenaming ? "Kaydediliyor..." : "Kaydet"}
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Upload Manager (Floating Bottom Right) */}
       <AnimatePresence>
         {uploads.length > 0 && (
           <motion.div
@@ -669,7 +743,7 @@ export default function HomePage() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={() => setFileToDelete(null)}
+            onClick={() => !isDeleting && setFileToDelete(null)}
           >
             <motion.div
               className="modal-content"
@@ -692,7 +766,7 @@ export default function HomePage() {
                 <button
                   className="btn btn-secondary"
                   style={{ flex: 1 }}
-                  onClick={() => setFileToDelete(null)}
+                  onClick={() => !isDeleting && setFileToDelete(null)}
                 >
                   İptal
                 </button>
