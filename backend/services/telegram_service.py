@@ -29,19 +29,19 @@ _MSG_CACHE: dict = {}
 # ── LRU Chunk Cache ──────────────────────────────────────────────────────────
 # Telegram'dan indirilen 1MB'lık chunk'ları bellekte tutar.
 # Seek yapıldığında aynı chunk tekrar Telegram'dan çekilmez → anlık atlama.
-# Key: (message_id, chunk_index)  |  Max: 500 chunk (~500MB) — 24GB RAM var
+# Key: (message_id, chunk_index)  |  Max: 150 chunk (~150MB)
 _CHUNK_CACHE: "collections.OrderedDict[tuple, bytes]" = collections.OrderedDict()
-_CHUNK_CACHE_MAX = 500
+_CHUNK_CACHE_MAX = 150
 STREAM_CHUNK_SIZE = 1024 * 1024  # 1MB — Pyrogram'ın iç chunk boyutuyla eşleşir
 
 # ── Prefetch Task Tablosu ─────────────────────────────────────────────────────
 _PREFETCH_TASKS: "dict[tuple, asyncio.Task]" = {}
-PREFETCH_AHEAD     = 8    # Kaç chunk ilerisini önceden indir (8MB lookahead)
-MAX_PREFETCH_TASKS = 16   # Aynı anda en fazla bu kadar prefetch task çalışsın
+PREFETCH_AHEAD     = 4   # Kaç chunk ilerisini önceden indir (4MB lookahead)
+MAX_PREFETCH_TASKS = 8   # Aynı anda en fazla bu kadar prefetch task çalışsın
 
 # ── Telegram Bağlantı Semaphore ───────────────────────────────────────────────
 # Eş zamanlı Telegram indirme sayısını sınırlar — rate-limit ve bellek koruması.
-# 4 çekirdekli güçlü sunucu — daha fazla paralel bağlantıya izin ver.
+# Stream isteği + prefetch birlikte max 3 bağlantı açabilir.
 _TELEGRAM_SEMAPHORE: asyncio.Semaphore | None = None
 
 
@@ -49,7 +49,7 @@ def _get_semaphore() -> asyncio.Semaphore:
     """Event loop başladıktan sonra semaphore'u oluştur (lazy init)."""
     global _TELEGRAM_SEMAPHORE
     if _TELEGRAM_SEMAPHORE is None:
-        _TELEGRAM_SEMAPHORE = asyncio.Semaphore(8)  # 3 → 8: daha fazla paralel indirme
+        _TELEGRAM_SEMAPHORE = asyncio.Semaphore(3)
     return _TELEGRAM_SEMAPHORE
 
 
@@ -394,32 +394,29 @@ async def stream_file_chunks(
 
     # Şifresiz dosya
     if not file_item or not file_item.encrypted:
-        first_chunk = start // STREAM_CHUNK_SIZE
-        last_chunk  = end   // STREAM_CHUNK_SIZE
-        
+        first_chunk  = start // STREAM_CHUNK_SIZE
+        last_chunk   = end   // STREAM_CHUNK_SIZE
+        limit_chunks = last_chunk - first_chunk + 1
+
         chunk_idx = first_chunk
-        while chunk_idx <= last_chunk:
-            chunk = await _get_chunk(client, msg, message_id, chunk_idx)
-            if not chunk:
-                break
-                
+        async for chunk in client.stream_media(msg, offset=first_chunk, limit=limit_chunks):
             chunk_start = chunk_idx * STREAM_CHUNK_SIZE
             slice_start = max(0, start - chunk_start) if chunk_idx == first_chunk else 0
             slice_end   = min(len(chunk), end - chunk_start + 1) if chunk_idx == last_chunk else len(chunk)
-            
+
             if slice_start < slice_end:
                 yield chunk[slice_start:slice_end]
-                
-            _schedule_prefetch(client, msg, message_id, chunk_idx)
             chunk_idx += 1
         return
 
     # Şifreli dosya
-    discard_bytes = start % 16; actual_start = (start - discard_bytes) + 16
-    actual_end   = end   + 16
+    discard_bytes = start % 16
+    actual_start  = (start - discard_bytes) + 16
+    actual_end    = end + 16
 
-    first_chunk = actual_start // STREAM_CHUNK_SIZE
-    last_chunk  = actual_end   // STREAM_CHUNK_SIZE
+    first_chunk  = actual_start // STREAM_CHUNK_SIZE
+    last_chunk   = actual_end   // STREAM_CHUNK_SIZE
+    limit_chunks = last_chunk - first_chunk + 1
 
     nonce = b""
     if file_item.checksum and file_item.checksum.startswith("aes-ctr:"):
@@ -430,41 +427,38 @@ async def stream_file_chunks(
             pass
 
     if not nonce:
-        chunk0 = await _get_chunk(client, msg, message_id, 0)
-        if chunk0 and len(chunk0) >= 16:
-            nonce = chunk0[:16]
-            nonce_b64 = base64.b64encode(nonce).decode()
-            file_item.checksum = f"aes-ctr:{nonce_b64}:" + (file_item.checksum or "")
-            
+        async for chunk0 in client.stream_media(msg, offset=0, limit=1):
+            if len(chunk0) >= 16:
+                nonce = chunk0[:16]
+                nonce_b64 = base64.b64encode(nonce).decode()
+                file_item.checksum = f"aes-ctr:{nonce_b64}:" + (file_item.checksum or "")
+            break
+
     if not nonce or len(nonce) < 16:
         return
 
-    decryptor, discard = crypto_service.get_seekable_decryptor(nonce, start - discard_bytes); discard = discard_bytes
+    decryptor, discard = crypto_service.get_seekable_decryptor(nonce, start - discard_bytes)
+    discard = discard_bytes
     first_yield = True
 
     chunk_idx = first_chunk
-    while chunk_idx <= last_chunk:
-        chunk = await _get_chunk(client, msg, message_id, chunk_idx)
-        if not chunk:
-            break
-            
+    async for chunk in client.stream_media(msg, offset=first_chunk, limit=limit_chunks):
         chunk_start = chunk_idx * STREAM_CHUNK_SIZE
-        
+
         slice_start = max(0, actual_start - chunk_start) if chunk_idx == first_chunk else 0
         slice_end   = min(len(chunk), actual_end - chunk_start + 1) if chunk_idx == last_chunk else len(chunk)
 
         if slice_start < slice_end:
             data_to_decrypt = chunk[slice_start:slice_end]
             decrypted = decryptor.update(data_to_decrypt)
-            
+
             if first_yield:
                 decrypted = decrypted[discard:]
                 first_yield = False
-                
+
             if decrypted:
                 yield decrypted
-                
-        _schedule_prefetch(client, msg, message_id, chunk_idx)
+
         chunk_idx += 1
 
 
