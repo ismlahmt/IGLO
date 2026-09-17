@@ -29,19 +29,19 @@ _MSG_CACHE: dict = {}
 # ── LRU Chunk Cache ──────────────────────────────────────────────────────────
 # Telegram'dan indirilen 1MB'lık chunk'ları bellekte tutar.
 # Seek yapıldığında aynı chunk tekrar Telegram'dan çekilmez → anlık atlama.
-# Key: (message_id, chunk_index)  |  Max: 150 chunk (~150MB)
+# Key: (message_id, chunk_index)  |  Max: 3000 chunk (~3GB) — 24GB RAM'lik sunucuda güvenli
 _CHUNK_CACHE: "collections.OrderedDict[tuple, bytes]" = collections.OrderedDict()
-_CHUNK_CACHE_MAX = 150
+_CHUNK_CACHE_MAX = 3000
 STREAM_CHUNK_SIZE = 1024 * 1024  # 1MB — Pyrogram'ın iç chunk boyutuyla eşleşir
 
 # ── Prefetch Task Tablosu ─────────────────────────────────────────────────────
 _PREFETCH_TASKS: "dict[tuple, asyncio.Task]" = {}
-PREFETCH_AHEAD     = 4   # Kaç chunk ilerisini önceden indir (4MB lookahead)
-MAX_PREFETCH_TASKS = 8   # Aynı anda en fazla bu kadar prefetch task çalışsın
+PREFETCH_AHEAD     = 12  # Kaç chunk ilerisini önceden indir (12MB lookahead)
+MAX_PREFETCH_TASKS = 24  # Aynı anda en fazla bu kadar prefetch task çalışsın
 
 # ── Telegram Bağlantı Semaphore ───────────────────────────────────────────────
 # Eş zamanlı Telegram indirme sayısını sınırlar — rate-limit ve bellek koruması.
-# Stream isteği + prefetch birlikte max 3 bağlantı açabilir.
+# 4 vCPU / 4 Gbps bir sunucuda 3 bağlantı çok düşük kalıyordu, 10'a çıkarıldı.
 _TELEGRAM_SEMAPHORE: asyncio.Semaphore | None = None
 
 
@@ -49,7 +49,7 @@ def _get_semaphore() -> asyncio.Semaphore:
     """Event loop başladıktan sonra semaphore'u oluştur (lazy init)."""
     global _TELEGRAM_SEMAPHORE
     if _TELEGRAM_SEMAPHORE is None:
-        _TELEGRAM_SEMAPHORE = asyncio.Semaphore(3)
+        _TELEGRAM_SEMAPHORE = asyncio.Semaphore(10)
     return _TELEGRAM_SEMAPHORE
 
 
@@ -129,6 +129,41 @@ def _schedule_prefetch(client: Client, msg, message_id: int, current_chunk: int)
         )
         _PREFETCH_TASKS[key] = task
         task.add_done_callback(lambda t, k=key: _PREFETCH_TASKS.pop(k, None))
+
+
+async def _iter_chunks_parallel(
+    client: Client,
+    msg,
+    message_id: int,
+    first_chunk: int,
+    last_chunk: int,
+    window: int = 8,
+) -> AsyncGenerator[tuple, None]:
+    """
+    [first_chunk, last_chunk] aralığını SIRALI değil, kayan bir pencere ile
+    PARALEL indirir (cache + semaphore'a saygılı) ama yine de doğru sırada
+    (chunk_idx, data) olarak yield eder.
+    """
+    pending: dict[int, asyncio.Task] = {}
+
+    def launch(i: int):
+        if i <= last_chunk and i not in pending:
+            pending[i] = asyncio.ensure_future(_get_chunk(client, msg, message_id, i))
+
+    for i in range(first_chunk, min(first_chunk + window, last_chunk + 1)):
+        launch(i)
+
+    next_to_launch = first_chunk + window
+    idx = first_chunk
+    while idx <= last_chunk:
+        data = await pending.pop(idx)
+        yield idx, data
+        if next_to_launch <= last_chunk:
+            launch(next_to_launch)
+            next_to_launch += 1
+        idx += 1
+
+    _schedule_prefetch(client, msg, message_id, last_chunk)
 
 
 async def prefetch_initial_chunks(message_id: int, count: int = 8) -> None:
@@ -268,7 +303,6 @@ async def sync_from_telegram(full_refresh: bool = False):
     new_files = []
 
     try:
-        # Arama motorunu kullanarak sadece IGLO dosyalarini saniyeler icinde buluyoruz
         async for message in client.search_messages(channel_id, query=CAPTION_PREFIX):
             if not message.caption:
                 continue
@@ -370,7 +404,7 @@ async def download_file_bytes(message_id: int) -> bytes:
     return data
 
 
-# ── Streaming (LRU cache ile) ─────────────────────────────────────────────────
+# ── Streaming (paralel chunk indirme + LRU cache) ────────────────────────────
 
 
 async def stream_file_chunks(
@@ -394,19 +428,16 @@ async def stream_file_chunks(
 
     # Şifresiz dosya
     if not file_item or not file_item.encrypted:
-        first_chunk  = start // STREAM_CHUNK_SIZE
-        last_chunk   = end   // STREAM_CHUNK_SIZE
-        limit_chunks = last_chunk - first_chunk + 1
+        first_chunk = start // STREAM_CHUNK_SIZE
+        last_chunk  = end   // STREAM_CHUNK_SIZE
 
-        chunk_idx = first_chunk
-        async for chunk in client.stream_media(msg, offset=first_chunk, limit=limit_chunks):
+        async for chunk_idx, chunk in _iter_chunks_parallel(client, msg, message_id, first_chunk, last_chunk):
             chunk_start = chunk_idx * STREAM_CHUNK_SIZE
             slice_start = max(0, start - chunk_start) if chunk_idx == first_chunk else 0
             slice_end   = min(len(chunk), end - chunk_start + 1) if chunk_idx == last_chunk else len(chunk)
 
             if slice_start < slice_end:
                 yield chunk[slice_start:slice_end]
-            chunk_idx += 1
         return
 
     # Şifreli dosya
@@ -414,9 +445,8 @@ async def stream_file_chunks(
     actual_start  = (start - discard_bytes) + 16
     actual_end    = end + 16
 
-    first_chunk  = actual_start // STREAM_CHUNK_SIZE
-    last_chunk   = actual_end   // STREAM_CHUNK_SIZE
-    limit_chunks = last_chunk - first_chunk + 1
+    first_chunk = actual_start // STREAM_CHUNK_SIZE
+    last_chunk  = actual_end   // STREAM_CHUNK_SIZE
 
     nonce = b""
     if file_item.checksum and file_item.checksum.startswith("aes-ctr:"):
@@ -427,12 +457,11 @@ async def stream_file_chunks(
             pass
 
     if not nonce:
-        async for chunk0 in client.stream_media(msg, offset=0, limit=1):
-            if len(chunk0) >= 16:
-                nonce = chunk0[:16]
-                nonce_b64 = base64.b64encode(nonce).decode()
-                file_item.checksum = f"aes-ctr:{nonce_b64}:" + (file_item.checksum or "")
-            break
+        chunk0 = await _get_chunk(client, msg, message_id, 0)
+        if len(chunk0) >= 16:
+            nonce = chunk0[:16]
+            nonce_b64 = base64.b64encode(nonce).decode()
+            file_item.checksum = f"aes-ctr:{nonce_b64}:" + (file_item.checksum or "")
 
     if not nonce or len(nonce) < 16:
         return
@@ -441,8 +470,7 @@ async def stream_file_chunks(
     discard = discard_bytes
     first_yield = True
 
-    chunk_idx = first_chunk
-    async for chunk in client.stream_media(msg, offset=first_chunk, limit=limit_chunks):
+    async for chunk_idx, chunk in _iter_chunks_parallel(client, msg, message_id, first_chunk, last_chunk):
         chunk_start = chunk_idx * STREAM_CHUNK_SIZE
 
         slice_start = max(0, actual_start - chunk_start) if chunk_idx == first_chunk else 0
@@ -459,8 +487,6 @@ async def stream_file_chunks(
             if decrypted:
                 yield decrypted
 
-        chunk_idx += 1
-
 
 # ── Delete ────────────────────────────────────────────────────────────────────
 
@@ -471,7 +497,6 @@ async def delete_file(message_id: int):
 
     await client.delete_messages(settings.telegram_channel_id, message_id)
     cache_service.remove_file(message_id)
-    # Cache'den de temizle
     keys_to_remove = [k for k in _CHUNK_CACHE if k[0] == message_id]
     for k in keys_to_remove:
         del _CHUNK_CACHE[k]

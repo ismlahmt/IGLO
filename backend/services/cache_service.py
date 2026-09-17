@@ -4,21 +4,40 @@ Telegram'ı her açılışta taramak yerine sadece delta güncelleme yapar.
 """
 import json
 import os
+import threading
 from datetime import datetime
 from typing import Optional
 from models.schemas import FileItem, CacheStats
 
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "..", "cache.json")
 
+# ── In-memory cache ──────────────────────────────────────────────────────────
+# cache.json'u sadece ilk erişimde diskten oku, sonrasında bellekte tut.
+# Önceden her stream/chunk isteğinde dosya diskten okunup JSON parse ediliyordu
+# (event loop'u bloklayan senkron I/O) — video oynatırken saniyede onlarca kez
+# tetiklenen bu okuma, gereksiz gecikme ve donmalara katkı sağlıyordu.
+_cache: Optional[dict] = None
+_lock = threading.Lock()
+
 
 def _load_raw() -> dict:
-    if not os.path.exists(CACHE_FILE):
-        return {"files": {}, "last_message_id": 0, "last_updated": None}
-    with open(CACHE_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    global _cache
+    if _cache is not None:
+        return _cache
+    with _lock:
+        if _cache is not None:
+            return _cache
+        if not os.path.exists(CACHE_FILE):
+            _cache = {"files": {}, "last_message_id": 0, "last_updated": None}
+        else:
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                _cache = json.load(f)
+    return _cache
 
 
 def _save_raw(data: dict):
+    global _cache
+    _cache = data
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2, default=str)
 
@@ -88,3 +107,4 @@ def get_stats() -> CacheStats:
 def clear_cache():
     """Cache'i tamamen sil (yeniden tarama için)."""
     _save_raw({"files": {}, "last_message_id": 0, "last_updated": None})
+
