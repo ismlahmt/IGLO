@@ -294,11 +294,12 @@ async def download_file_bytes(message_id: int) -> bytes:
     return data
 
 
-# -- Streaming (tek stream_media cagrisi + LRU cache) ----------------------
-# KRITIK: Her chunk icin ayri stream_media cagrisi YAPMA!
-# Tek bir stream_media(offset=X, limit=Y) cagrisi, Telegram ile TEK bir
-# MTProto baglantisi acar ve tum chunk'lari o baglanti uzerinden aktirir.
-# 70 ayri cagri yapmak yerine 1 cagri -> 10x-50x daha hizli.
+# -- Streaming (batch stream_media + LRU cache) ----------------------------
+# Pyrogram tek bir media session kullanir. stream_media(limit=70) cagrisi
+# o session'i 70 chunk boyunca KILITLER — baska dosyalar sirada bekler.
+# Cozum: 5'erli batch'lerle istemek. Her batch arasinda baglanti serbest
+# kalir, diger istekler (2MB'lik dosya vb.) arada gecebilir.
+STREAM_BATCH_SIZE = 5  # Her batch'te 5 chunk (5MB) indir, sonra baglanti birak
 
 
 async def stream_file_chunks(
@@ -338,17 +339,19 @@ async def stream_file_chunks(
                 chunk_idx += 1
                 continue
 
-            # Cache miss -> kalan tum chunk'lari TEK stream_media ile cek
-            remaining = last_chunk - chunk_idx + 1
-            async for chunk in client.stream_media(msg, offset=chunk_idx, limit=remaining):
-                _cache_put(message_id, chunk_idx, chunk)
-                chunk_start = chunk_idx * STREAM_CHUNK_SIZE
-                s = max(0, start - chunk_start) if chunk_idx == first_chunk else 0
-                e = min(len(chunk), end - chunk_start + 1) if chunk_idx == last_chunk else len(chunk)
-                if s < e:
-                    yield chunk[s:e]
-                chunk_idx += 1
-            break  # stream_media tum kalan chunk'lari halletti
+            # Cache miss -> batch'lerle Telegram'dan cek (baglanti kitlenmesini onle)
+            while chunk_idx <= last_chunk:
+                batch_limit = min(STREAM_BATCH_SIZE, last_chunk - chunk_idx + 1)
+                async for chunk in client.stream_media(msg, offset=chunk_idx, limit=batch_limit):
+                    _cache_put(message_id, chunk_idx, chunk)
+                    chunk_start = chunk_idx * STREAM_CHUNK_SIZE
+                    s = max(0, start - chunk_start) if chunk_idx == first_chunk else 0
+                    e = min(len(chunk), end - chunk_start + 1) if chunk_idx == last_chunk else len(chunk)
+                    if s < e:
+                        yield chunk[s:e]
+                    chunk_idx += 1
+                # Batch arasi: event loop'a kontrol ver, diger istekler gecsin
+                await asyncio.sleep(0)
         return
 
     # --- Sifreli dosya ---
@@ -406,22 +409,24 @@ async def stream_file_chunks(
             chunk_idx += 1
             continue
 
-        # Cache miss -> tek stream_media ile kalan hepsini cek
-        remaining = last_chunk - chunk_idx + 1
-        async for chunk in client.stream_media(msg, offset=chunk_idx, limit=remaining):
-            _cache_put(message_id, chunk_idx, chunk)
-            chunk_start = chunk_idx * STREAM_CHUNK_SIZE
-            s = max(0, actual_start - chunk_start) if chunk_idx == first_chunk else 0
-            e = min(len(chunk), actual_end - chunk_start + 1) if chunk_idx == last_chunk else len(chunk)
-            if s < e:
-                decrypted = decryptor.update(chunk[s:e])
-                if first_yield:
-                    decrypted = decrypted[discard:]
-                    first_yield = False
-                if decrypted:
-                    yield decrypted
-            chunk_idx += 1
-        break
+        # Cache miss -> batch'lerle Telegram'dan cek
+        while chunk_idx <= last_chunk:
+            batch_limit = min(STREAM_BATCH_SIZE, last_chunk - chunk_idx + 1)
+            async for chunk in client.stream_media(msg, offset=chunk_idx, limit=batch_limit):
+                _cache_put(message_id, chunk_idx, chunk)
+                chunk_start = chunk_idx * STREAM_CHUNK_SIZE
+                s = max(0, actual_start - chunk_start) if chunk_idx == first_chunk else 0
+                e = min(len(chunk), actual_end - chunk_start + 1) if chunk_idx == last_chunk else len(chunk)
+                if s < e:
+                    decrypted = decryptor.update(chunk[s:e])
+                    if first_yield:
+                        decrypted = decrypted[discard:]
+                        first_yield = False
+                    if decrypted:
+                        yield decrypted
+                chunk_idx += 1
+            # Batch arasi: event loop'a kontrol ver, diger istekler gecsin
+            await asyncio.sleep(0)
 
 
 # -- Delete -----------------------------------------------------------------
