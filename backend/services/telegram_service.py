@@ -51,6 +51,35 @@ def _cache_get(message_id: int, chunk_index: int) -> Optional[bytes]:
     return None
 
 
+# -- Arka Plan Indirme (non-blocking) --------------------------------------
+# Video acilinca dosyanin tamamini arka planda indir (fire-and-forget).
+# stream_file_chunks cache'de olan chunk'lari aninda servis eder,
+# olmayanlar icin kisa bir stream_media(limit=1) ile alir.
+# Download 16 MB/s, video bitrate genelde 5-8 MB/s → download hep onde gider.
+_DOWNLOAD_TASKS: dict[int, asyncio.Task] = {}
+_DOWNLOAD_DONE: set[int] = set()
+
+
+def _start_background_download(client: Client, msg, message_id: int) -> None:
+    """Dosyanin tamamini arka planda cache'e indir (fire-and-forget)."""
+    if message_id in _DOWNLOAD_DONE or message_id in _DOWNLOAD_TASKS:
+        return
+
+    async def _do_download():
+        try:
+            chunk_idx = 0
+            async for chunk in client.stream_media(msg):
+                _cache_put(message_id, chunk_idx, chunk)
+                chunk_idx += 1
+            _DOWNLOAD_DONE.add(message_id)
+        except Exception as e:
+            print(f"[bg_download] hata #{message_id}: {e}")
+        finally:
+            _DOWNLOAD_TASKS.pop(message_id, None)
+
+    _DOWNLOAD_TASKS[message_id] = asyncio.create_task(_do_download())
+
+
 async def prefetch_initial_chunks(message_id: int, count: int = 12) -> None:
     """
     Video oynatici acilinca ilk N chunk'i tek bir stream_media cagrisiyla indir.
@@ -314,6 +343,9 @@ async def stream_file_chunks(
             settings.telegram_channel_id, message_id
         )
     msg = _MSG_CACHE[message_id]
+
+    # Arka planda tum dosyayi cache'e indir (beklemeden, fire-and-forget)
+    _start_background_download(client, msg, message_id)
 
     file_size = file_item.size if file_item else 0
     if end is None:
