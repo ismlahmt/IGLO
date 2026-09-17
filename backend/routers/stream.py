@@ -80,6 +80,10 @@ async def stream_video(
             logger.error(f"[stream] Beklenmedik hata — id={message_id}: {e}")
 
     # Her zaman 206 döndür — bazı tarayıcılar (Brave dahil) 200'de seek yapamıyor
+    # Content-Length kasıtlı olarak yok: şifreli dosyalarda byte hesabı küçük
+    # sapma gösterebilir → "Response content shorter than Content-Length" hatası
+    # → tarayıcı isteği baştan tekrar eder → 25 saniyelik bekleme.
+    # Content-Length olmadan tarayıcı chunked transfer kullanır — streaming için standarttır.
     return StreamingResponse(
         generate(),
         status_code=206,
@@ -87,8 +91,7 @@ async def stream_video(
         headers={
             "Content-Range":  f"bytes {start}-{end}/{file_size}",
             "Accept-Ranges":  "bytes",
-            "Content-Length": str(content_length),
-            "Cache-Control":  "public, max-age=3600",
+            "Cache-Control":  "no-cache",
         },
     )
 
