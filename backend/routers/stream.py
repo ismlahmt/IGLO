@@ -3,6 +3,9 @@ from fastapi.responses import StreamingResponse
 from services import telegram_service, cache_service
 from services.auth_service import get_current_user_query
 import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/stream", tags=["streaming"])
 
@@ -63,8 +66,18 @@ async def stream_video(
     content_length = end - start + 1
 
     async def generate():
-        async for chunk in telegram_service.stream_file_chunks(message_id, start, end):
-            yield chunk
+        try:
+            async for chunk in telegram_service.stream_file_chunks(message_id, start, end):
+                # Tarayıcı bağlantıyı kestiyse boşa Telegram'dan çekme
+                if await request.is_disconnected():
+                    logger.debug(f"[stream] Tarayıcı bağlantısı kesildi — stream durduruluyor (id={message_id})")
+                    break
+                yield chunk
+        except asyncio.CancelledError:
+            # Tarayıcı isteği iptal etti (seek, yeni range isteği vb.) — normal durum, sessizce çık
+            logger.debug(f"[stream] İstek iptal edildi (CancelledError) — id={message_id}, range={start}-{end}")
+        except Exception as e:
+            logger.error(f"[stream] Beklenmedik hata — id={message_id}: {e}")
 
     # Her zaman 206 döndür — bazı tarayıcılar (Brave dahil) 200'de seek yapamıyor
     return StreamingResponse(
@@ -78,6 +91,4 @@ async def stream_video(
             "Cache-Control":  "public, max-age=3600",
         },
     )
-
-
 
