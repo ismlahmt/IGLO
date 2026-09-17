@@ -29,19 +29,19 @@ _MSG_CACHE: dict = {}
 # ── LRU Chunk Cache ──────────────────────────────────────────────────────────
 # Telegram'dan indirilen 1MB'lık chunk'ları bellekte tutar.
 # Seek yapıldığında aynı chunk tekrar Telegram'dan çekilmez → anlık atlama.
-# Key: (message_id, chunk_index)  |  Max: 150 chunk (~150MB)
+# Key: (message_id, chunk_index)  |  Max: 500 chunk (~500MB) — 24GB RAM var
 _CHUNK_CACHE: "collections.OrderedDict[tuple, bytes]" = collections.OrderedDict()
-_CHUNK_CACHE_MAX = 150
+_CHUNK_CACHE_MAX = 500
 STREAM_CHUNK_SIZE = 1024 * 1024  # 1MB — Pyrogram'ın iç chunk boyutuyla eşleşir
 
 # ── Prefetch Task Tablosu ─────────────────────────────────────────────────────
 _PREFETCH_TASKS: "dict[tuple, asyncio.Task]" = {}
-PREFETCH_AHEAD     = 4   # Kaç chunk ilerisini önceden indir (4MB lookahead)
-MAX_PREFETCH_TASKS = 8   # Aynı anda en fazla bu kadar prefetch task çalışsın
+PREFETCH_AHEAD     = 8    # Kaç chunk ilerisini önceden indir (8MB lookahead)
+MAX_PREFETCH_TASKS = 16   # Aynı anda en fazla bu kadar prefetch task çalışsın
 
 # ── Telegram Bağlantı Semaphore ───────────────────────────────────────────────
 # Eş zamanlı Telegram indirme sayısını sınırlar — rate-limit ve bellek koruması.
-# Stream isteği + prefetch birlikte max 3 bağlantı açabilir.
+# 4 çekirdekli güçlü sunucu — daha fazla paralel bağlantıya izin ver.
 _TELEGRAM_SEMAPHORE: asyncio.Semaphore | None = None
 
 
@@ -49,7 +49,7 @@ def _get_semaphore() -> asyncio.Semaphore:
     """Event loop başladıktan sonra semaphore'u oluştur (lazy init)."""
     global _TELEGRAM_SEMAPHORE
     if _TELEGRAM_SEMAPHORE is None:
-        _TELEGRAM_SEMAPHORE = asyncio.Semaphore(3)
+        _TELEGRAM_SEMAPHORE = asyncio.Semaphore(8)  # 3 → 8: daha fazla paralel indirme
     return _TELEGRAM_SEMAPHORE
 
 
