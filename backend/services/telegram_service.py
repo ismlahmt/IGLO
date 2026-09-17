@@ -396,16 +396,21 @@ async def stream_file_chunks(
     if not file_item or not file_item.encrypted:
         first_chunk = start // STREAM_CHUNK_SIZE
         last_chunk  = end   // STREAM_CHUNK_SIZE
-        limit_chunks = last_chunk - first_chunk + 1
         
         chunk_idx = first_chunk
-        async for chunk in client.stream_media(msg, offset=first_chunk, limit=limit_chunks):
+        while chunk_idx <= last_chunk:
+            chunk = await _get_chunk(client, msg, message_id, chunk_idx)
+            if not chunk:
+                break
+                
             chunk_start = chunk_idx * STREAM_CHUNK_SIZE
             slice_start = max(0, start - chunk_start) if chunk_idx == first_chunk else 0
             slice_end   = min(len(chunk), end - chunk_start + 1) if chunk_idx == last_chunk else len(chunk)
             
             if slice_start < slice_end:
                 yield chunk[slice_start:slice_end]
+                
+            _schedule_prefetch(client, msg, message_id, chunk_idx)
             chunk_idx += 1
         return
 
@@ -415,7 +420,6 @@ async def stream_file_chunks(
 
     first_chunk = actual_start // STREAM_CHUNK_SIZE
     last_chunk  = actual_end   // STREAM_CHUNK_SIZE
-    limit_chunks = last_chunk - first_chunk + 1
 
     nonce = b""
     if file_item.checksum and file_item.checksum.startswith("aes-ctr:"):
@@ -426,12 +430,11 @@ async def stream_file_chunks(
             pass
 
     if not nonce:
-        async for chunk0 in client.stream_media(msg, offset=0, limit=1):
-            if len(chunk0) >= 16:
-                nonce = chunk0[:16]
-                nonce_b64 = base64.b64encode(nonce).decode()
-                file_item.checksum = f"aes-ctr:{nonce_b64}:" + (file_item.checksum or ""); 
-            break
+        chunk0 = await _get_chunk(client, msg, message_id, 0)
+        if chunk0 and len(chunk0) >= 16:
+            nonce = chunk0[:16]
+            nonce_b64 = base64.b64encode(nonce).decode()
+            file_item.checksum = f"aes-ctr:{nonce_b64}:" + (file_item.checksum or "")
             
     if not nonce or len(nonce) < 16:
         return
@@ -440,7 +443,11 @@ async def stream_file_chunks(
     first_yield = True
 
     chunk_idx = first_chunk
-    async for chunk in client.stream_media(msg, offset=first_chunk, limit=limit_chunks):
+    while chunk_idx <= last_chunk:
+        chunk = await _get_chunk(client, msg, message_id, chunk_idx)
+        if not chunk:
+            break
+            
         chunk_start = chunk_idx * STREAM_CHUNK_SIZE
         
         slice_start = max(0, actual_start - chunk_start) if chunk_idx == first_chunk else 0
@@ -457,6 +464,7 @@ async def stream_file_chunks(
             if decrypted:
                 yield decrypted
                 
+        _schedule_prefetch(client, msg, message_id, chunk_idx)
         chunk_idx += 1
 
 
