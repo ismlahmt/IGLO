@@ -23,9 +23,12 @@ async def prefetch_video(
     if not file:
         raise HTTPException(status_code=404, detail="Dosya bulunamadı")
 
-    # Arka planda başlat, cevabı beklemeden hemen dön
-    asyncio.create_task(telegram_service.prefetch_initial_chunks(message_id, count=8))
-    return {"status": "prefetch_started", "message_id": message_id}
+    # Arka planda TAMAMINI indir — 16 MB/s hizla 73MB dosya 4.6 saniyede cache'e girer
+    # Tarayici range istekleri geldiginde her sey bellekten servis edilir → donma yok
+    file_size = file.size
+    chunk_count = (file_size // (1024 * 1024)) + 2
+    asyncio.create_task(telegram_service.prefetch_initial_chunks(message_id, count=chunk_count))
+    return {"status": "prefetch_started", "message_id": message_id, "chunks": chunk_count}
 
 
 @router.get("/{message_id}")
@@ -68,16 +71,11 @@ async def stream_video(
     async def generate():
         try:
             async for chunk in telegram_service.stream_file_chunks(message_id, start, end):
-                # Tarayıcı bağlantıyı kestiyse boşa Telegram'dan çekme
-                if await request.is_disconnected():
-                    logger.debug(f"[stream] Tarayıcı bağlantısı kesildi — stream durduruluyor (id={message_id})")
-                    break
                 yield chunk
         except asyncio.CancelledError:
-            # Tarayıcı isteği iptal etti (seek, yeni range isteği vb.) — normal durum, sessizce çık
-            logger.debug(f"[stream] İstek iptal edildi (CancelledError) — id={message_id}, range={start}-{end}")
+            pass
         except Exception as e:
-            logger.error(f"[stream] Beklenmedik hata — id={message_id}: {e}")
+            logger.error(f"[stream] Hata — id={message_id}: {e}")
 
     # Her zaman 206 döndür — bazı tarayıcılar (Brave dahil) 200'de seek yapamıyor
     # Content-Length kasıtlı olarak yok: şifreli dosyalarda byte hesabı küçük

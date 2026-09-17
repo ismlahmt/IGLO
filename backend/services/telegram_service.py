@@ -294,12 +294,10 @@ async def download_file_bytes(message_id: int) -> bytes:
     return data
 
 
-# -- Streaming (batch stream_media + LRU cache) ----------------------------
-# Pyrogram tek bir media session kullanir. stream_media(limit=70) cagrisi
-# o session'i 70 chunk boyunca KILITLER — baska dosyalar sirada bekler.
-# Cozum: 5'erli batch'lerle istemek. Her batch arasinda baglanti serbest
-# kalir, diger istekler (2MB'lik dosya vb.) arada gecebilir.
-STREAM_BATCH_SIZE = 5  # Her batch'te 5 chunk (5MB) indir, sonra baglanti birak
+# -- Streaming (stream_media + LRU cache) ----------------------------------
+# Ilk istek: stream_media ile Telegram'dan ceker, her chunk'i cache'e yazar.
+# Sonraki istekler: ayni chunk'lar cache'den gelir (0ms).
+# prefetch_initial_chunks tum dosyayi arka planda indirir (16 MB/s = 73MB/4.6s).
 
 
 async def stream_file_chunks(
@@ -339,9 +337,8 @@ async def stream_file_chunks(
                 chunk_idx += 1
                 continue
 
-            # Cache miss -> stream_media ile cek, her N chunk'ta event loop'a kontrol ver
+            # Cache miss -> stream_media ile cek, cache'e yaz
             remaining = last_chunk - chunk_idx + 1
-            batch_counter = 0
             async for chunk in client.stream_media(msg, offset=chunk_idx, limit=remaining):
                 _cache_put(message_id, chunk_idx, chunk)
                 chunk_start = chunk_idx * STREAM_CHUNK_SIZE
@@ -350,9 +347,6 @@ async def stream_file_chunks(
                 if s < e:
                     yield chunk[s:e]
                 chunk_idx += 1
-                batch_counter += 1
-                if batch_counter % STREAM_BATCH_SIZE == 0:
-                    await asyncio.sleep(0)  # Diger isteklere firsat ver
         return
 
     # --- Sifreli dosya ---
@@ -410,9 +404,8 @@ async def stream_file_chunks(
             chunk_idx += 1
             continue
 
-        # Cache miss -> stream_media ile cek, her N chunk'ta event loop'a kontrol ver
+        # Cache miss -> stream_media ile cek, cache'e yaz
         remaining = last_chunk - chunk_idx + 1
-        batch_counter = 0
         async for chunk in client.stream_media(msg, offset=chunk_idx, limit=remaining):
             _cache_put(message_id, chunk_idx, chunk)
             chunk_start = chunk_idx * STREAM_CHUNK_SIZE
@@ -426,9 +419,6 @@ async def stream_file_chunks(
                 if decrypted:
                     yield decrypted
             chunk_idx += 1
-            batch_counter += 1
-            if batch_counter % STREAM_BATCH_SIZE == 0:
-                await asyncio.sleep(0)
 
 
 # -- Delete -----------------------------------------------------------------
