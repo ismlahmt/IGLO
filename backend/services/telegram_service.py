@@ -179,6 +179,25 @@ async def download_file_bytes(message_id: int) -> bytes:
 
 # -- Streaming --------------------------------------------------------------
 
+_CURRENT_BG_TASK = None
+_CURRENT_BG_MESSAGE_ID = None
+
+def _start_caching_task(message_id: int, client, msg, file_item, crypto_service):
+    global _CURRENT_BG_TASK, _CURRENT_BG_MESSAGE_ID
+    
+    # Eger ayni dosya zaten iniyorsa, iptal etme devam etsin
+    if _CURRENT_BG_MESSAGE_ID == message_id and _CURRENT_BG_TASK and not _CURRENT_BG_TASK.done():
+        return
+        
+    # Baska bir dosya iniyorsa, onu IPTAL ET (kullanici baska videoya gecti)
+    if _CURRENT_BG_TASK and not _CURRENT_BG_TASK.done():
+        _CURRENT_BG_TASK.cancel()
+        
+    _CURRENT_BG_MESSAGE_ID = message_id
+    _CURRENT_BG_TASK = asyncio.create_task(
+        disk_cache_service.cache_file_from_telegram(message_id, client, msg, file_item, crypto_service)
+    )
+
 async def stream_file_chunks(
     message_id: int,
     start: int = 0,
@@ -194,7 +213,8 @@ async def stream_file_chunks(
         )
     msg = _MSG_CACHE[message_id]
 
-    asyncio.create_task(disk_cache_service.cache_file_from_telegram(message_id, client, msg, file_item, crypto_service))
+    cache_client = await client_pool.get_cache_client()
+    _start_caching_task(message_id, cache_client, msg, file_item, crypto_service)
 
     file_size = file_item.size if file_item else 0
     if end is None:

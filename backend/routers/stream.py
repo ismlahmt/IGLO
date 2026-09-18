@@ -24,13 +24,9 @@ async def prefetch_video(
         raise HTTPException(status_code=404, detail="Dosya bulunamadı")
 
     if not disk_cache_service.is_cached(message_id):
-        client = await client_pool.get_download_client()
+        client = await client_pool.get_cache_client()
         msg = await client.get_messages(get_settings().telegram_channel_id, message_id)
-        asyncio.create_task(
-            disk_cache_service.cache_file_from_telegram(
-                message_id, client, msg, file, crypto_service
-            )
-        )
+        telegram_service._start_caching_task(message_id, client, msg, file, crypto_service)
         return {"status": "prefetch_started", "message_id": message_id}
     
     return {"status": "already_cached", "message_id": message_id}
