@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
-from services import telegram_service, cache_service
+from fastapi.responses import StreamingResponse, FileResponse
+from services import telegram_service, cache_service, disk_cache_service, client_pool, crypto_service
 from services.auth_service import get_current_user_query
+from config import get_settings
 import asyncio
 import logging
 
@@ -16,19 +17,23 @@ async def prefetch_video(
     _: str = Depends(get_current_user_query),
 ):
     """
-    İlk 8 chunk'ı arka planda indir (fire-and-forget).
-    Frontend video oynatıcı açılınca bu endpoint'i çağırır.
+    Arka planda indir (fire-and-forget).
     """
     file = cache_service.get_file(message_id)
     if not file:
         raise HTTPException(status_code=404, detail="Dosya bulunamadı")
 
-    # Arka planda TAMAMINI indir — 16 MB/s hizla 73MB dosya 4.6 saniyede cache'e girer
-    # Tarayici range istekleri geldiginde her sey bellekten servis edilir → donma yok
-    file_size = file.size
-    chunk_count = (file_size // (1024 * 1024)) + 2
-    asyncio.create_task(telegram_service.prefetch_initial_chunks(message_id, count=chunk_count))
-    return {"status": "prefetch_started", "message_id": message_id, "chunks": chunk_count}
+    if not disk_cache_service.is_cached(message_id):
+        client = await client_pool.get_download_client()
+        msg = await client.get_messages(get_settings().telegram_channel_id, message_id)
+        asyncio.create_task(
+            disk_cache_service.cache_file_from_telegram(
+                message_id, client, msg, file, crypto_service
+            )
+        )
+        return {"status": "prefetch_started", "message_id": message_id}
+    
+    return {"status": "already_cached", "message_id": message_id}
 
 
 @router.get("/{message_id}")
@@ -39,16 +44,21 @@ async def stream_video(
 ):
     """
     Video/Audio streaming endpoint.
-    Her zaman HTTP 206 Partial Content döner — tarayıcı seek yapabilsin.
-    LRU chunk cache sayesinde daha önce izlenen kısımlar anlık yüklenir.
     """
     file = cache_service.get_file(message_id)
     if not file:
         raise HTTPException(status_code=404, detail="Dosya bulunamadı")
 
+    if disk_cache_service.is_cached(message_id):
+        disk_cache_service.touch(message_id)
+        return FileResponse(
+            path=disk_cache_service.get_path(message_id),
+            media_type=file.mime_type,
+            content_disposition_type="inline"
+        )
+
     file_size = file.size
 
-    # Range header'ı işle — yoksa tüm dosyayı serve et
     range_header = request.headers.get("Range")
     if range_header:
         try:
@@ -61,12 +71,9 @@ async def stream_video(
     else:
         start, end = 0, file_size - 1
 
-    # Sınır kontrolü
     end = min(end, file_size - 1)
     if start > end:
         raise HTTPException(status_code=416, detail="Range Not Satisfiable")
-
-    content_length = end - start + 1
 
     async def generate():
         try:
@@ -77,11 +84,6 @@ async def stream_video(
         except Exception as e:
             logger.error(f"[stream] Hata — id={message_id}: {e}")
 
-    # Her zaman 206 döndür — bazı tarayıcılar (Brave dahil) 200'de seek yapamıyor
-    # Content-Length kasıtlı olarak yok: şifreli dosyalarda byte hesabı küçük
-    # sapma gösterebilir → "Response content shorter than Content-Length" hatası
-    # → tarayıcı isteği baştan tekrar eder → 25 saniyelik bekleme.
-    # Content-Length olmadan tarayıcı chunked transfer kullanır — streaming için standarttır.
     return StreamingResponse(
         generate(),
         status_code=206,

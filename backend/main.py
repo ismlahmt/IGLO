@@ -35,7 +35,8 @@ async def lifespan(app: FastAPI):
 
     # Kapanış: Telegram client'ı durdur
     print("IGLO kapatiliyor...")
-    await telegram_service.shutdown_client()
+    from services import client_pool
+    await client_pool.shutdown_all()
 
 
 settings = get_settings()
