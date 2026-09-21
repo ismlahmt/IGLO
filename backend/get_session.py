@@ -33,6 +33,7 @@ async def main():
         name="iglo_setup",
         api_id=API_ID,
         api_hash=API_HASH,
+        in_memory=True,  # Disk'e iglo_setup.session yazma — backend ile çakışma önlenir
     ) as app:
         session = await app.export_session_string()
 
