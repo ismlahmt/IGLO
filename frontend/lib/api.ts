@@ -76,7 +76,9 @@ export async function uploadFile(
   customName?: string,
   abortController?: AbortController
 ): Promise<FileItem> {
-  const uploadId = crypto.randomUUID();
+  const uploadId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2) + Date.now().toString(36);
   const form = new FormData();
   form.append("file", file);
   form.append("folder", folder);

@@ -13,6 +13,15 @@ import { isAuthenticated, logout, listFiles, syncFiles, getStats, uploadFile, de
 import VideoPlayer from "@/components/VideoPlayer";
 import axios from "axios";
 
+/* HTTP ve HTTPS'de çalışan UUID üretici */
+function genId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return Math.random().toString(36).slice(2) + Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+
 /* ── helpers ──────────────────────────────────── */
 function fmtSize(b: number) {
   if (b < 1024) return `${b} B`;
@@ -270,7 +279,7 @@ export default function HomePage() {
   function handleFilesQueued(fileList: FileList | File[]) {
     const arr = Array.from(fileList);
     const items: QueueItem[] = arr.map(f => ({
-      id: crypto.randomUUID(),
+      id: genId(),
       file: f,
       customName: f.name,
       previewUrl: (f.type.startsWith("image/") || f.type.startsWith("video/"))
