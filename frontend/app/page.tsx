@@ -9,7 +9,7 @@ import {
   Play, Download, Trash2, MoreHorizontal,
   CheckCircle, AlertCircle, ChevronRight, Plus
 } from "lucide-react";
-import { isAuthenticated, logout, listFiles, syncFiles, getStats, uploadFile, deleteFile, FileItem, getDownloadUrl, getThumbnailUrl } from "@/lib/api";
+import { isAuthenticated, logout, listFiles, syncFiles, getStats, uploadFile, deleteFile, FileItem, getDownloadUrl, getThumbnailUrl, getStreamUrl } from "@/lib/api";
 import VideoPlayer from "@/components/VideoPlayer";
 import axios from "axios";
 
@@ -83,10 +83,14 @@ function FileCard({ file, index, onPlay, onDeleteRequest, onRenameRequest }: {
   const menuRef = useRef<HTMLDivElement>(null);
   const cat = getCategory(file);
   const cfg = CAT_CONFIG[cat];
-  const isMedia = ["video","audio"].includes(cat);
   const isVideo = cat === "video";
-  const thumbUrl = isVideo ? getThumbnailUrl(file.message_id) : null;
-  const showThumb = isVideo && !thumbError;
+  const isImage = cat === "image";
+  const isAudio = cat === "audio";
+  const isMedia = isVideo || isImage || isAudio; // tüm medya türleri tıklanabilir
+  const thumbUrl = isVideo ? getThumbnailUrl(file.message_id)
+    : isImage ? getStreamUrl(file.message_id) // fotolar → doğrudan stream
+    : null;
+  const showThumb = (isVideo || isImage) && !thumbError;
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -177,8 +181,15 @@ function FileCard({ file, index, onPlay, onDeleteRequest, onRenameRequest }: {
         {/* Actions */}
         <div className="file-card-actions" style={{ zIndex: 3 }}>
           {isMedia && (
-            <button className="file-card-action-btn play" onClick={(e) => { e.stopPropagation(); onPlay(file); }} title="Oynat">
-              <Play size={12} fill="white" color="white" />
+            <button className="file-card-action-btn play"
+              onClick={(e) => { e.stopPropagation(); onPlay(file); }}
+              title={isImage ? "Görüntüle" : isAudio ? "Dinle" : "Oynat"}
+            >
+              {isImage
+                ? <ImageIcon size={12} color="white" />
+                : isAudio
+                  ? <Music size={12} color="white" />
+                  : <Play size={12} fill="white" color="white" />}
             </button>
           )}
           <a
@@ -223,6 +234,8 @@ export default function HomePage() {
   const [dragging, setDragging] = useState(false);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [playingFile, setPlayingFile] = useState<FileItem | null>(null);
+  const [viewingImage, setViewingImage] = useState<FileItem | null>(null);
+  const [playingAudio, setPlayingAudio] = useState<FileItem | null>(null);
   const [fileToDelete, setFileToDelete] = useState<FileItem | null>(null);
   const [fileToRename, setFileToRename] = useState<FileItem | null>(null);
   const [newName, setNewName] = useState("");
@@ -648,7 +661,12 @@ export default function HomePage() {
                   key={file.message_id}
                   file={file}
                   index={i}
-                  onPlay={setPlayingFile}
+                  onPlay={(f) => {
+                  const c = getCategory(f);
+                  if (c === "video") setPlayingFile(f);
+                  else if (c === "image") setViewingImage(f);
+                  else if (c === "audio") setPlayingAudio(f);
+                }}
                   onDeleteRequest={setFileToDelete}
                 />
               ))}
@@ -1039,6 +1057,142 @@ export default function HomePage() {
       {/* Video player */}
       <AnimatePresence>
         {playingFile && <VideoPlayer file={playingFile} onClose={() => setPlayingFile(null)} />}
+      </AnimatePresence>
+
+      {/* ── Image Viewer ── */}
+      <AnimatePresence>
+        {viewingImage && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setViewingImage(null)}
+            style={{
+              position: "fixed", inset: 0, zIndex: 400,
+              background: "rgba(0,0,0,0.92)", backdropFilter: "blur(12px)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              padding: 16,
+            }}
+          >
+            {/* Close */}
+            <button
+              onClick={() => setViewingImage(null)}
+              style={{
+                position: "absolute", top: 20, right: 20,
+                width: 40, height: 40, borderRadius: "50%", border: "none",
+                background: "rgba(255,255,255,0.1)", cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                color: "#fff", backdropFilter: "blur(4px)", zIndex: 1,
+              }}
+            >
+              <X size={20} />
+            </button>
+
+            {/* Download */}
+            <a
+              href={getDownloadUrl(viewingImage.message_id)}
+              download={viewingImage.name}
+              onClick={e => e.stopPropagation()}
+              style={{
+                position: "absolute", top: 20, right: 70,
+                width: 40, height: 40, borderRadius: "50%",
+                background: "rgba(255,255,255,0.1)", cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                color: "#fff", backdropFilter: "blur(4px)", zIndex: 1,
+                textDecoration: "none",
+              }}
+            >
+              <Download size={18} />
+            </a>
+
+            {/* Image */}
+            <motion.img
+              src={getStreamUrl(viewingImage.message_id)}
+              alt={viewingImage.name}
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={e => e.stopPropagation()}
+              style={{
+                maxWidth: "100%", maxHeight: "90vh",
+                objectFit: "contain", borderRadius: 12,
+                boxShadow: "0 32px 80px rgba(0,0,0,0.8)",
+                userSelect: "none",
+              }}
+            />
+
+            {/* Filename */}
+            <div style={{
+              position: "absolute", bottom: 24, left: "50%", transform: "translateX(-50%)",
+              background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)",
+              padding: "8px 16px", borderRadius: 99,
+              fontSize: 13, color: "rgba(255,255,255,0.85)", fontWeight: 500,
+              maxWidth: "80vw", textAlign: "center", whiteSpace: "nowrap",
+              overflow: "hidden", textOverflow: "ellipsis",
+            }}>
+              {viewingImage.name} · {fmtSize(viewingImage.size)}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Audio Player ── */}
+      <AnimatePresence>
+        {playingAudio && (
+          <motion.div
+            initial={{ opacity: 0, y: 60 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 60 }}
+            style={{
+              position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)",
+              width: "min(480px, calc(100vw - 32px))",
+              background: "rgba(17,17,27,0.96)", backdropFilter: "blur(20px)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              borderRadius: 20, padding: "16px 20px",
+              boxShadow: "0 16px 60px rgba(0,0,0,0.6)",
+              zIndex: 400,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              {/* Music icon */}
+              <div style={{
+                width: 48, height: 48, borderRadius: 12, flexShrink: 0,
+                background: "rgba(139,92,246,0.2)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <Music size={22} style={{ color: "#8b5cf6" }} />
+              </div>
+
+              {/* Info + audio */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontSize: 13, fontWeight: 600, color: "#fff",
+                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                  marginBottom: 6,
+                }}>
+                  {playingAudio.name}
+                </div>
+                <audio
+                  src={getStreamUrl(playingAudio.message_id)}
+                  controls
+                  autoPlay
+                  style={{ width: "100%", height: 32, outline: "none" }}
+                />
+              </div>
+
+              {/* Close */}
+              <button
+                onClick={() => setPlayingAudio(null)}
+                style={{
+                  width: 32, height: 32, borderRadius: "50%", border: "none",
+                  background: "rgba(255,255,255,0.08)", cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  color: "rgba(255,255,255,0.7)", flexShrink: 0,
+                }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          </motion.div>
+        )}
       </AnimatePresence>
 
       {/* Delete Confirmation Modal */}
