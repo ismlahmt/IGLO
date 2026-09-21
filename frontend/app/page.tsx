@@ -235,6 +235,7 @@ export default function HomePage() {
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [playingFile, setPlayingFile] = useState<FileItem | null>(null);
   const [viewingImage, setViewingImage] = useState<FileItem | null>(null);
+  const [isZoomed, setIsZoomed] = useState(false);
   const [playingAudio, setPlayingAudio] = useState<FileItem | null>(null);
   const [fileToDelete, setFileToDelete] = useState<FileItem | null>(null);
   const [fileToRename, setFileToRename] = useState<FileItem | null>(null);
@@ -1064,17 +1065,17 @@ export default function HomePage() {
         {viewingImage && (
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            onClick={() => setViewingImage(null)}
+            onClick={() => { setViewingImage(null); setIsZoomed(false); }}
             style={{
               position: "fixed", inset: 0, zIndex: 400,
               background: "rgba(0,0,0,0.92)", backdropFilter: "blur(12px)",
               display: "flex", alignItems: "center", justifyContent: "center",
-              padding: 16,
+              padding: 16, overflow: isZoomed ? "auto" : "hidden",
             }}
           >
             {/* Close */}
             <button
-              onClick={() => setViewingImage(null)}
+              onClick={() => { setViewingImage(null); setIsZoomed(false); }}
               style={{
                 position: "absolute", top: 20, right: 20,
                 width: 40, height: 40, borderRadius: "50%", border: "none",
@@ -1108,14 +1109,19 @@ export default function HomePage() {
               src={getStreamUrl(viewingImage.message_id)}
               alt={viewingImage.name}
               initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
+              animate={{ scale: isZoomed ? 2 : 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              onClick={e => e.stopPropagation()}
+              transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              onClick={e => {
+                e.stopPropagation();
+                setIsZoomed(!isZoomed);
+              }}
               style={{
                 maxWidth: "100%", maxHeight: "90vh",
                 objectFit: "contain", borderRadius: 12,
                 boxShadow: "0 32px 80px rgba(0,0,0,0.8)",
-                userSelect: "none",
+                userSelect: "none", cursor: isZoomed ? "zoom-out" : "zoom-in",
+                transformOrigin: "center center",
               }}
             />
 

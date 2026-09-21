@@ -64,8 +64,10 @@ async def stream_video(
             end   = int(parts[1]) if len(parts) > 1 and parts[1] else file_size - 1
         except (ValueError, IndexError):
             start, end = 0, file_size - 1
+        status_code = 206
     else:
         start, end = 0, file_size - 1
+        status_code = 200
 
     end = min(end, file_size - 1)
     if start > end:
@@ -80,15 +82,20 @@ async def stream_video(
         except Exception as e:
             logger.error(f"[stream] Hata — id={message_id}: {e}")
 
+    headers = {
+        "Accept-Ranges":  "bytes",
+        "Content-Length": str(end - start + 1),
+        "Cache-Control":  "no-cache",
+    }
+    
+    if status_code == 206:
+        headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+
     return StreamingResponse(
         generate(),
-        status_code=206,
+        status_code=status_code,
         media_type=file.mime_type,
-        headers={
-            "Content-Range":  f"bytes {start}-{end}/{file_size}",
-            "Accept-Ranges":  "bytes",
-            "Content-Length": str(end - start + 1),
-            "Cache-Control":  "no-cache",
-        },
+        headers=headers,
     )
+
 
