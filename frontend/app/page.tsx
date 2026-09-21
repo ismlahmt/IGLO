@@ -246,7 +246,6 @@ export default function HomePage() {
   const [folder, setFolder] = useState("/");
   const [uploadQueue, setUploadQueue] = useState<QueueItem[]>([]);
   const [showUploadMenu, setShowUploadMenu] = useState(false);
-  const [showMobileUpload, setShowMobileUpload] = useState(false);
   const uploadMenuRef = useRef<HTMLDivElement>(null);
   const mobileFileInputRef = useRef<HTMLInputElement>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

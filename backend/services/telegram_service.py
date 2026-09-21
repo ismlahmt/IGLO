@@ -7,12 +7,16 @@ import re
 import asyncio
 import base64
 import hashlib
+import logging
+from collections import OrderedDict
 from datetime import datetime
 from typing import Optional, AsyncGenerator
 from pyrogram.types import Message
 from config import get_settings
 from models.schemas import FileItem
 from services import crypto_service, cache_service, client_pool, disk_cache_service
+
+logger = logging.getLogger(__name__)
 
 # Caption sablonu
 CAPTION_PREFIX = "IGLO::v1"
@@ -22,6 +26,35 @@ UPLOAD_PROGRESS = {}
 # Mesaj objelerini cache'le
 _MSG_CACHE: dict = {}
 STREAM_CHUNK_SIZE = 1024 * 1024  # 1MB
+
+# ── In-memory Chunk LRU Cache (64MB) ────────────────────────────
+# Telegram'dan indirilen raw (sifresiz) chunk'lar burada tutulur.
+# Browser moov-atom seek'i veya ayni pozisyona tekrar istek atinca
+# Telegram'dan tekrar indirmek yerine buradan verilir.
+_CHUNK_CACHE: OrderedDict = OrderedDict()  # (message_id, chunk_idx) -> bytes
+_CHUNK_CACHE_BYTES: int = 0
+MAX_CHUNK_CACHE_BYTES: int = 64 * 1024 * 1024  # 64MB
+
+def _cache_put(message_id: int, chunk_idx: int, data: bytes):
+    global _CHUNK_CACHE_BYTES
+    key = (message_id, chunk_idx)
+    if key in _CHUNK_CACHE:
+        _CHUNK_CACHE.move_to_end(key)
+        return
+    _CHUNK_CACHE[key] = data
+    _CHUNK_CACHE_BYTES += len(data)
+    _CHUNK_CACHE.move_to_end(key)
+    # Evict oldest entries if over limit
+    while _CHUNK_CACHE_BYTES > MAX_CHUNK_CACHE_BYTES and _CHUNK_CACHE:
+        _, evicted = _CHUNK_CACHE.popitem(last=False)
+        _CHUNK_CACHE_BYTES -= len(evicted)
+
+def _cache_get(message_id: int, chunk_idx: int) -> Optional[bytes]:
+    key = (message_id, chunk_idx)
+    if key in _CHUNK_CACHE:
+        _CHUNK_CACHE.move_to_end(key)  # Mark as recently used
+        return _CHUNK_CACHE[key]
+    return None
 
 
 # -- Caption helpers --------------------------------------------------------
@@ -284,21 +317,48 @@ async def stream_file_chunks(
     chunk_idx = first_chunk
     
     logger.warning(f"[telegram_service] Beginning stream loop for msg_id={message_id} from chunk_idx={first_chunk} limit={remaining}")
-    async for chunk in client.stream_media(msg, offset=first_chunk, limit=remaining):
-        chunk_start = chunk_idx * STREAM_CHUNK_SIZE
-        s = max(0, actual_start - chunk_start) if chunk_idx == first_chunk else 0
-        e = min(len(chunk), actual_end - chunk_start + 1) if chunk_idx == last_chunk else len(chunk)
-        if s < e:
-            decrypted = decryptor.update(chunk[s:e])
-            if first_yield:
-                decrypted = decrypted[discard:]
-                first_yield = False
-                logger.warning(f"[telegram_service] First yield for msg_id={message_id}: chunk_idx={chunk_idx}, yielded {len(decrypted)} bytes")
-            if decrypted:
-                yield decrypted
-        chunk_idx += 1
     
-    logger.warning(f"[telegram_service] Stream loop finished for msg_id={message_id}, last chunk_idx was {chunk_idx-1}")
+    # Hangi chunk'larin cache'de oldugunu kontrol et
+    chunks_to_download = [ci for ci in range(first_chunk, last_chunk + 1) if _cache_get(message_id, ci) is None]
+    
+    if not chunks_to_download:
+        # Tum chunk'lar cache'de — Telegram'a hic basvurma
+        logger.warning(f"[telegram_service] ALL {remaining} chunks cached for msg_id={message_id}, serving from cache")
+        for ci in range(first_chunk, last_chunk + 1):
+            chunk = _cache_get(message_id, ci)
+            if chunk is None:
+                break
+            chunk_start = ci * STREAM_CHUNK_SIZE
+            s = max(0, actual_start - chunk_start) if ci == first_chunk else 0
+            e = min(len(chunk), actual_end - chunk_start + 1) if ci == last_chunk else len(chunk)
+            if s < e:
+                decrypted = decryptor.update(chunk[s:e])
+                if first_yield:
+                    decrypted = decrypted[discard:]
+                    first_yield = False
+                if decrypted:
+                    yield decrypted
+    else:
+        # Telegram'dan stream et, gelen chunk'lari hem cache'e yaz hem yield et
+        logger.warning(f"[telegram_service] Downloading {len(chunks_to_download)} chunks from Telegram for msg_id={message_id}")
+        async for chunk in client.stream_media(msg, offset=first_chunk, limit=remaining):
+            # Cache'e yaz
+            _cache_put(message_id, chunk_idx, chunk)
+            
+            chunk_start = chunk_idx * STREAM_CHUNK_SIZE
+            s = max(0, actual_start - chunk_start) if chunk_idx == first_chunk else 0
+            e = min(len(chunk), actual_end - chunk_start + 1) if chunk_idx == last_chunk else len(chunk)
+            if s < e:
+                decrypted = decryptor.update(chunk[s:e])
+                if first_yield:
+                    decrypted = decrypted[discard:]
+                    first_yield = False
+                    logger.warning(f"[telegram_service] First yield for msg_id={message_id}: chunk_idx={chunk_idx}, yielded {len(decrypted)} bytes")
+                if decrypted:
+                    yield decrypted
+            chunk_idx += 1
+    
+    logger.warning(f"[telegram_service] Stream loop finished for msg_id={message_id}")
     
     # Stream bittikten SONRA cache baslat (artik client musait)
     cache_client = await client_pool.get_cache_client()
