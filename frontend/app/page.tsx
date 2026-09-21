@@ -53,6 +53,14 @@ interface UploadItem {
   status: "pending"|"uploading"|"done"|"error"|"canceled"; error?: string; abortController?: AbortController;
 }
 
+/* ── Upload queue (önizleme modalı için) ─────── */
+interface QueueItem {
+  id: string;
+  file: File;
+  customName: string;
+  previewUrl?: string; // image/video için object URL
+}
+
 /* ── File card ────────────────────────────────── */
 function FileCard({ file, index, onPlay, onDeleteRequest, onRenameRequest }: {
   file: FileItem; index: number;
@@ -213,6 +221,9 @@ export default function HomePage() {
   const [isRenaming, setIsRenaming] = useState(false);
   const [stats, setStats] = useState<{ total_files: number; total_size: number } | null>(null);
   const [folder, setFolder] = useState("/");
+  const [uploadQueue, setUploadQueue] = useState<QueueItem[]>([]);
+  const [showUploadMenu, setShowUploadMenu] = useState(false);
+  const uploadMenuRef = useRef<HTMLDivElement>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -255,24 +266,48 @@ export default function HomePage() {
     setUploads(prev => prev.map(u => u.id === id ? { ...u, ...patch } : u));
   }
 
-  function handleFilesSelected(fileList: FileList | File[]) {
+  // Dosyaları kuyruğa ekle (önizleme modalı için)
+  function handleFilesQueued(fileList: FileList | File[]) {
     const arr = Array.from(fileList);
-    const items: UploadItem[] = arr.map(f => ({ id: crypto.randomUUID(), file: f, customName: f.name, progress: 0, status: "pending" as const }));
-    setUploads(prev => [...prev, ...items]);
+    const items: QueueItem[] = arr.map(f => ({
+      id: crypto.randomUUID(),
+      file: f,
+      customName: f.name,
+      previewUrl: (f.type.startsWith("image/") || f.type.startsWith("video/"))
+        ? URL.createObjectURL(f)
+        : undefined,
+    }));
+    setUploadQueue(prev => [...prev, ...items]);
+    setShowUploadMenu(false);
   }
 
-  async function startUploads() {
-    const pendingItems = uploads.filter(u => u.status === "pending");
-    for (const item of pendingItems) {
+  // Önizleme modalını kapat ve object URL'leri temizle
+  function closeUploadQueue() {
+    uploadQueue.forEach(q => { if (q.previewUrl) URL.revokeObjectURL(q.previewUrl); });
+    setUploadQueue([]);
+  }
+
+  // Kuyruktan upload başlat
+  function startQueuedUploads() {
+    if (uploadQueue.length === 0) return;
+    const items: UploadItem[] = uploadQueue.map(q => ({
+      id: q.id, file: q.file, customName: q.customName, progress: 0, status: "pending" as const,
+    }));
+    uploadQueue.forEach(q => { if (q.previewUrl) URL.revokeObjectURL(q.previewUrl); });
+    setUploadQueue([]);
+    setUploads(prev => [...prev, ...items]);
+    uploadItemsDirectly(items);
+  }
+
+  // items parametresiyle direkt çalışır — React state closure sorununu önler
+  async function uploadItemsDirectly(items: UploadItem[]) {
+    for (const item of items) {
       const abortController = new AbortController();
       updateUpload(item.id, { status: "uploading", abortController });
       try {
         let finalName = item.customName.trim();
-        const origExt = item.file.name.includes('.') ? item.file.name.split('.').pop() : null;
-        if (origExt && !finalName.includes('.')) {
-          finalName += `.${origExt}`;
-        }
-        
+        const origExt = item.file.name.includes(".") ? item.file.name.split(".").pop() : null;
+        if (origExt && !finalName.includes(".")) finalName += `.${origExt}`;
         const result = await uploadFile(item.file, folder, pct => updateUpload(item.id, { progress: pct }), finalName, abortController);
         updateUpload(item.id, { status: "done", progress: 100 });
         setFiles(prev => [result, ...prev]);
@@ -299,7 +334,8 @@ export default function HomePage() {
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault(); setDragging(false);
-    if (e.dataTransfer.files.length) handleFilesSelected(e.dataTransfer.files);
+    if (e.dataTransfer.files.length) handleFilesQueued(e.dataTransfer.files);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folder]);
 
   const filteredFiles = files.filter(f => folder === "/" ? true : f.folder === folder);
@@ -436,20 +472,96 @@ export default function HomePage() {
             >
               <RefreshCw size={14} className={syncing ? "spin" : ""} />
             </button>
-            <button
-              id="upload-btn"
-              onClick={() => document.getElementById("main-file-input")?.click()}
-              className="btn btn-primary topbar-upload"
-            >
-              <Upload size={14} /> Yükle
-            </button>
-            <input
-              id="main-file-input"
-              type="file"
-              multiple
-              style={{ display: "none" }}
-              onChange={e => { if (e.target.files?.length) handleFilesSelected(e.target.files); e.target.value = ""; }}
-            />
+
+            {/* Yükle butonu + popup menü */}
+            <div ref={uploadMenuRef} style={{ position: "relative" }}>
+              <button
+                id="upload-btn"
+                onClick={() => setShowUploadMenu(v => !v)}
+                className="btn btn-primary topbar-upload"
+              >
+                <Upload size={14} /> Yükle
+              </button>
+
+              <AnimatePresence>
+                {showUploadMenu && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 6, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 6, scale: 0.95 }}
+                    transition={{ duration: 0.12 }}
+                    style={{
+                      position: "absolute", top: "calc(100% + 8px)", right: 0,
+                      background: "var(--bg-1, #1e1e2e)",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: 14, padding: "6px",
+                      boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+                      zIndex: 200, minWidth: 200,
+                    }}
+                  >
+                    {/* Fotoğraf / Video */}
+                    <button
+                      onClick={() => document.getElementById("input-media")?.click()}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 12,
+                        width: "100%", padding: "10px 12px", background: "none",
+                        border: "none", borderRadius: 10, cursor: "pointer",
+                        color: "var(--text-1, #fff)", fontFamily: "inherit",
+                        fontSize: 14, fontWeight: 500,
+                        transition: "background 0.15s",
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.07)")}
+                      onMouseLeave={e => (e.currentTarget.style.background = "none")}
+                    >
+                      <div style={{
+                        width: 36, height: 36, borderRadius: 10,
+                        background: "rgba(99,102,241,0.18)",
+                        display: "flex", alignItems: "center", justifyContent: "center"
+                      }}>
+                        <ImageIcon size={18} style={{ color: "#6366f1" }} />
+                      </div>
+                      <div style={{ textAlign: "left" }}>
+                        <div style={{ fontSize: 14, fontWeight: 600 }}>Fotoğraf veya Video</div>
+                        <div style={{ fontSize: 11, color: "var(--text-3, #888)", marginTop: 1 }}>Görsel ve video dosyaları</div>
+                      </div>
+                    </button>
+
+                    {/* Belge */}
+                    <button
+                      onClick={() => document.getElementById("input-document")?.click()}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 12,
+                        width: "100%", padding: "10px 12px", background: "none",
+                        border: "none", borderRadius: 10, cursor: "pointer",
+                        color: "var(--text-1, #fff)", fontFamily: "inherit",
+                        fontSize: 14, fontWeight: 500,
+                        transition: "background 0.15s",
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.07)")}
+                      onMouseLeave={e => (e.currentTarget.style.background = "none")}
+                    >
+                      <div style={{
+                        width: 36, height: 36, borderRadius: 10,
+                        background: "rgba(245,158,11,0.18)",
+                        display: "flex", alignItems: "center", justifyContent: "center"
+                      }}>
+                        <FileText size={18} style={{ color: "#f59e0b" }} />
+                      </div>
+                      <div style={{ textAlign: "left" }}>
+                        <div style={{ fontSize: 14, fontWeight: 600 }}>Belge</div>
+                        <div style={{ fontSize: 11, color: "var(--text-3, #888)", marginTop: 1 }}>Her türlü dosya</div>
+                      </div>
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Gizli file input'lar */}
+            <input id="input-media" type="file" multiple accept="image/*,video/*,audio/*" style={{ display: "none" }}
+              onChange={e => { if (e.target.files?.length) handleFilesQueued(e.target.files); e.target.value = ""; }} />
+            <input id="input-document" type="file" multiple style={{ display: "none" }}
+              onChange={e => { if (e.target.files?.length) handleFilesQueued(e.target.files); e.target.value = ""; }} />
           </div>
         </div>
 
@@ -606,6 +718,191 @@ export default function HomePage() {
           )}
         </AnimatePresence>
 
+        {/* ── Upload Queue Modal (Telegram-style önizleme) ── */}
+      <AnimatePresence>
+        {uploadQueue.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{
+              position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
+              backdropFilter: "blur(6px)", zIndex: 300,
+              display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+            }}
+            onClick={closeUploadQueue}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.94, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.94, y: 16 }}
+              transition={{ type: "spring", stiffness: 400, damping: 30 }}
+              onClick={e => e.stopPropagation()}
+              style={{
+                background: "var(--bg-1, #1e1e2e)",
+                border: "1px solid rgba(255,255,255,0.1)",
+                borderRadius: 20, width: "100%", maxWidth: 500,
+                maxHeight: "85vh", display: "flex", flexDirection: "column",
+                boxShadow: "0 24px 80px rgba(0,0,0,0.6)",
+                overflow: "hidden",
+              }}
+            >
+              {/* Modal Header */}
+              <div style={{
+                padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between",
+                borderBottom: "1px solid rgba(255,255,255,0.07)",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{
+                    width: 34, height: 34, borderRadius: 10,
+                    background: "rgba(99,102,241,0.2)",
+                    display: "flex", alignItems: "center", justifyContent: "center"
+                  }}>
+                    <Upload size={16} style={{ color: "#6366f1" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-1, #fff)" }}>
+                      Dosya Yükle
+                    </div>
+                    <div style={{ fontSize: 12, color: "var(--text-3, #888)", marginTop: 1 }}>
+                      {uploadQueue.length} dosya seçildi · {folder === "/" ? "Kök" : folder}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={closeUploadQueue}
+                  style={{
+                    width: 32, height: 32, borderRadius: "50%", border: "none",
+                    background: "rgba(255,255,255,0.07)", cursor: "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    color: "var(--text-2, #aaa)",
+                  }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* File List */}
+              <div style={{ overflowY: "auto", flex: 1, padding: "12px" }}>
+                {uploadQueue.map((item, idx) => {
+                  const ext = item.file.name.split(".").pop()?.toLowerCase() ?? "";
+                  const isImg = item.file.type.startsWith("image/");
+                  const isVid = item.file.type.startsWith("video/");
+                  const cat = ["mp4","mkv","avi","mov","webm"].includes(ext) ? "video"
+                    : ["jpg","jpeg","png","gif","webp","svg"].includes(ext) ? "image"
+                    : ["mp3","flac","wav","ogg"].includes(ext) ? "audio"
+                    : ["pdf","doc","docx","txt"].includes(ext) ? "document"
+                    : "other";
+                  const catColors: Record<string, {bg: string, color: string, Icon: React.ElementType}> = {
+                    video:    { bg: "rgba(99,102,241,0.2)",  color: "#6366f1", Icon: Film },
+                    image:    { bg: "rgba(20,184,166,0.2)",  color: "#14b8a6", Icon: ImageIcon },
+                    audio:    { bg: "rgba(139,92,246,0.2)",  color: "#8b5cf6", Icon: Music },
+                    document: { bg: "rgba(245,158,11,0.2)",  color: "#f59e0b", Icon: FileText },
+                    other:    { bg: "rgba(100,116,139,0.2)", color: "#64748b", Icon: Archive },
+                  };
+                  const cfg = catColors[cat] ?? catColors.other;
+                  const CatIcon = cfg.Icon;
+
+                  return (
+                    <div key={item.id} style={{
+                      display: "flex", alignItems: "center", gap: 12,
+                      padding: "10px", marginBottom: 8,
+                      background: "rgba(255,255,255,0.04)",
+                      borderRadius: 14, border: "1px solid rgba(255,255,255,0.06)",
+                    }}>
+                      {/* Thumbnail */}
+                      <div style={{
+                        width: 56, height: 56, borderRadius: 10, flexShrink: 0, overflow: "hidden",
+                        background: cfg.bg, display: "flex", alignItems: "center", justifyContent: "center"
+                      }}>
+                        {(isImg || isVid) && item.previewUrl ? (
+                          isImg
+                            ? <img src={item.previewUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" />
+                            : <video src={item.previewUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted />
+                        ) : (
+                          <CatIcon size={22} style={{ color: cfg.color }} />
+                        )}
+                      </div>
+
+                      {/* Info */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <input
+                          type="text"
+                          value={item.customName}
+                          onChange={e => setUploadQueue(prev => prev.map((q, i) => i === idx ? { ...q, customName: e.target.value } : q))}
+                          placeholder="Dosya adı..."
+                          style={{
+                            width: "100%", background: "rgba(0,0,0,0.25)",
+                            border: "1px solid rgba(255,255,255,0.1)",
+                            borderRadius: 8, padding: "6px 10px",
+                            fontSize: 13, fontWeight: 500, color: "var(--text-1, #fff)",
+                            outline: "none", fontFamily: "inherit",
+                            transition: "border-color 0.15s",
+                          }}
+                          onFocus={e => (e.target.style.borderColor = "rgba(99,102,241,0.6)")}
+                          onBlur={e => (e.target.style.borderColor = "rgba(255,255,255,0.1)")}
+                        />
+                        <div style={{ fontSize: 11, color: "var(--text-3, #888)", marginTop: 4 }}>
+                          {fmtSize(item.file.size)} · {item.file.type || "bilinmeyen tür"}
+                        </div>
+                      </div>
+
+                      {/* Remove */}
+                      <button
+                        onClick={() => {
+                          if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+                          setUploadQueue(prev => prev.filter((_, i) => i !== idx));
+                        }}
+                        style={{
+                          width: 30, height: 30, borderRadius: "50%", border: "none",
+                          background: "rgba(244,63,94,0.15)", cursor: "pointer",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          color: "#f43f5e", flexShrink: 0,
+                        }}
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Footer */}
+              <div style={{
+                padding: "12px 16px",
+                borderTop: "1px solid rgba(255,255,255,0.07)",
+                background: "rgba(0,0,0,0.15)",
+                display: "flex", alignItems: "center", gap: 10,
+              }}>
+                <button
+                  onClick={closeUploadQueue}
+                  style={{
+                    padding: "10px 18px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.1)",
+                    background: "rgba(255,255,255,0.05)", cursor: "pointer",
+                    color: "var(--text-2, #ccc)", fontFamily: "inherit", fontSize: 14, fontWeight: 500,
+                  }}
+                >
+                  İptal
+                </button>
+                <button
+                  onClick={startQueuedUploads}
+                  disabled={uploadQueue.length === 0}
+                  style={{
+                    flex: 1, padding: "10px 18px", borderRadius: 12, border: "none",
+                    background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                    cursor: "pointer", color: "#fff", fontFamily: "inherit",
+                    fontSize: 14, fontWeight: 600,
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                    boxShadow: "0 4px 16px rgba(99,102,241,0.4)",
+                  }}
+                >
+                  <Upload size={15} />
+                  Yükle · {uploadQueue.length} dosya
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
         {/* Upload Manager (Floating Bottom Right) */}
       <AnimatePresence>
         {uploads.length > 0 && (
@@ -718,11 +1015,11 @@ export default function HomePage() {
               </AnimatePresence>
             </div>
             
-            {/* Start Button */}
-            {uploads.some(u => u.status === "pending") && (
+            {/* Tüm uploadlar bitince paneli kapat butonu */}
+            {uploads.length > 0 && uploads.every(u => u.status === "done" || u.status === "error" || u.status === "canceled") && (
               <div style={{ padding: "12px", borderTop: "1px solid var(--border-subtle)", background: "var(--bg-2)" }}>
-                <button onClick={startUploads} className="btn btn-primary" style={{ width: "100%", justifyContent: "center" }}>
-                  <Play size={14} fill="white" /> Tümünü Başlat
+                <button onClick={() => setUploads([])} className="btn btn-secondary" style={{ width: "100%", justifyContent: "center" }}>
+                  <X size={14} /> Kapat
                 </button>
               </div>
             )}
@@ -818,7 +1115,7 @@ export default function HomePage() {
       {/* ── FAB — mobil yükleme butonu ── */}
       <button
         className="fab-upload"
-        onClick={() => document.getElementById("main-file-input")?.click()}
+        onClick={() => setShowUploadMenu(v => !v)}
         aria-label="Dosya Yükle"
       >
         <Plus size={22} />
