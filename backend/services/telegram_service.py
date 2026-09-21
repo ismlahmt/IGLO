@@ -203,6 +203,14 @@ async def stream_file_chunks(
     start: int = 0,
     end: Optional[int] = None,
 ) -> AsyncGenerator[bytes, None]:
+    global _CURRENT_BG_TASK, _CURRENT_BG_MESSAGE_ID
+    
+    # Cancel any active background caching — single client can't handle two concurrent streams
+    if _CURRENT_BG_TASK and not _CURRENT_BG_TASK.done():
+        _CURRENT_BG_TASK.cancel()
+        _CURRENT_BG_TASK = None
+        _CURRENT_BG_MESSAGE_ID = None
+
     client = await client_pool.get_download_client()
     settings = get_settings()
     file_item = cache_service.get_file(message_id)
@@ -212,9 +220,6 @@ async def stream_file_chunks(
             settings.telegram_channel_id, message_id
         )
     msg = _MSG_CACHE[message_id]
-
-    cache_client = await client_pool.get_cache_client()
-    _start_caching_task(message_id, cache_client, msg, file_item, crypto_service)
 
     file_size = file_item.size if file_item else 0
     if end is None:
@@ -245,24 +250,27 @@ async def stream_file_chunks(
     last_chunk  = actual_end   // STREAM_CHUNK_SIZE
     remaining = last_chunk - first_chunk + 1
     
-    logger.info(f"[telegram_service] msg_id={message_id}, start={start}, discard={discard_bytes}, actual_start={actual_start}, actual_end={actual_end}, first_chunk={first_chunk}, remaining={remaining}")
+    logger.warning(f"[telegram_service] msg_id={message_id}, start={start}, discard={discard_bytes}, actual_start={actual_start}, actual_end={actual_end}, first_chunk={first_chunk}, remaining={remaining}")
 
-    # Nonce'u al
+    # Nonce her zaman checksum'dan oku — asla extra Telegram isteği atma
     nonce = b""
-    if file_item.checksum and file_item.checksum.startswith("aes-ctr:"):
+    if file_item and file_item.checksum and file_item.checksum.startswith("aes-ctr:"):
         try:
             nonce_b64 = file_item.checksum.split(":")[1]
             nonce = base64.b64decode(nonce_b64)
         except Exception:
             pass
 
+    # Checksum'da nonce yoksa ilk chunk'tan al ve kaydet (bir kerelik)
     if not nonce:
-        logger.info(f"[telegram_service] Fetching initial chunk for nonce for msg_id={message_id}")
+        logger.warning(f"[telegram_service] Fetching initial chunk for nonce for msg_id={message_id}")
         async for chunk0 in client.stream_media(msg, offset=0, limit=1):
             if chunk0 and len(chunk0) >= 16:
                 nonce = chunk0[:16]
                 nonce_b64 = base64.b64encode(nonce).decode()
-                file_item.checksum = f"aes-ctr:{nonce_b64}:" + (file_item.checksum or "")
+                # Kalici olarak kaydet — bir dahaki seferde tekrar fetch edilmez
+                if file_item:
+                    file_item.checksum = f"aes-ctr:{nonce_b64}:" + (file_item.checksum or "")
             break
 
     if not nonce or len(nonce) < 16:
@@ -275,7 +283,7 @@ async def stream_file_chunks(
 
     chunk_idx = first_chunk
     
-    logger.info(f"[telegram_service] Beginning stream loop for msg_id={message_id} from chunk_idx={first_chunk} limit={remaining}")
+    logger.warning(f"[telegram_service] Beginning stream loop for msg_id={message_id} from chunk_idx={first_chunk} limit={remaining}")
     async for chunk in client.stream_media(msg, offset=first_chunk, limit=remaining):
         chunk_start = chunk_idx * STREAM_CHUNK_SIZE
         s = max(0, actual_start - chunk_start) if chunk_idx == first_chunk else 0
@@ -285,12 +293,16 @@ async def stream_file_chunks(
             if first_yield:
                 decrypted = decrypted[discard:]
                 first_yield = False
-                logger.info(f"[telegram_service] First yield for msg_id={message_id}: chunk_idx={chunk_idx}, yielded {len(decrypted)} bytes")
+                logger.warning(f"[telegram_service] First yield for msg_id={message_id}: chunk_idx={chunk_idx}, yielded {len(decrypted)} bytes")
             if decrypted:
                 yield decrypted
         chunk_idx += 1
     
-    logger.info(f"[telegram_service] Stream loop finished for msg_id={message_id}, last chunk_idx was {chunk_idx-1}")
+    logger.warning(f"[telegram_service] Stream loop finished for msg_id={message_id}, last chunk_idx was {chunk_idx-1}")
+    
+    # Stream bittikten SONRA cache baslat (artik client musait)
+    cache_client = await client_pool.get_cache_client()
+    _start_caching_task(message_id, cache_client, msg, file_item, crypto_service)
 
 
 # -- Delete -----------------------------------------------------------------

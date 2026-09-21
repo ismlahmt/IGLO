@@ -246,7 +246,9 @@ export default function HomePage() {
   const [folder, setFolder] = useState("/");
   const [uploadQueue, setUploadQueue] = useState<QueueItem[]>([]);
   const [showUploadMenu, setShowUploadMenu] = useState(false);
+  const [showMobileUpload, setShowMobileUpload] = useState(false);
   const uploadMenuRef = useRef<HTMLDivElement>(null);
+  const mobileFileInputRef = useRef<HTMLInputElement>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -931,7 +933,7 @@ export default function HomePage() {
         )}
       </AnimatePresence>
 
-        {/* Upload Manager (Floating Bottom Right) */}
+      {/* Upload Manager (Floating Bottom Right) */}
       <AnimatePresence>
         {uploads.length > 0 && (
           <motion.div
@@ -940,10 +942,11 @@ export default function HomePage() {
             exit={{ opacity: 0, y: 50, scale: 0.9 }}
             style={{
               position: "fixed",
-              bottom: 24,
+              bottom: "calc(24px + var(--bottom-nav-h, 0px))",
               right: 24,
               width: 360,
-              maxHeight: 500,
+              maxWidth: "calc(100vw - 48px)",
+              maxHeight: 420,
               background: "var(--bg-1)",
               border: "1px solid var(--border-default)",
               borderRadius: 16,
@@ -1148,7 +1151,9 @@ export default function HomePage() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 60 }}
             style={{
-              position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)",
+              position: "fixed",
+              bottom: "calc(24px + var(--bottom-nav-h, 0px))",
+              left: "50%", transform: "translateX(-50%)",
               width: "min(480px, calc(100vw - 32px))",
               background: "rgba(17,17,27,0.96)", backdropFilter: "blur(20px)",
               border: "1px solid rgba(255,255,255,0.1)",
@@ -1282,13 +1287,28 @@ export default function HomePage() {
       </nav>
 
       {/* ── FAB — mobil yükleme butonu ── */}
+      {/* Hidden file inputs for FAB */}
+      <input
+        ref={mobileFileInputRef}
+        type="file"
+        multiple
+        style={{ display: "none" }}
+        onChange={e => { if (e.target.files?.length) { handleFilesQueued(e.target.files); e.target.value = ""; } }}
+      />
       <button
         className="fab-upload"
-        onClick={() => setShowUploadMenu(v => !v)}
+        onClick={() => mobileFileInputRef.current?.click()}
         aria-label="Dosya Yükle"
       >
         <Plus size={22} />
       </button>
+
+      {/* ── CSS variable for bottom nav height ── */}
+      <style>{`
+        @media (max-width: 768px) {
+          :root { --bottom-nav-h: 68px; }
+        }
+      `}</style>
     </div>
   );
 }
