@@ -244,6 +244,8 @@ async def stream_file_chunks(
     first_chunk = actual_start // STREAM_CHUNK_SIZE
     last_chunk  = actual_end   // STREAM_CHUNK_SIZE
     remaining = last_chunk - first_chunk + 1
+    
+    logger.info(f"[telegram_service] msg_id={message_id}, start={start}, discard={discard_bytes}, actual_start={actual_start}, actual_end={actual_end}, first_chunk={first_chunk}, remaining={remaining}")
 
     # Nonce'u al
     nonce = b""
@@ -255,6 +257,7 @@ async def stream_file_chunks(
             pass
 
     if not nonce:
+        logger.info(f"[telegram_service] Fetching initial chunk for nonce for msg_id={message_id}")
         async for chunk0 in client.stream_media(msg, offset=0, limit=1):
             if chunk0 and len(chunk0) >= 16:
                 nonce = chunk0[:16]
@@ -263,6 +266,7 @@ async def stream_file_chunks(
             break
 
     if not nonce or len(nonce) < 16:
+        logger.error(f"[telegram_service] Nonce not found for encrypted file msg_id={message_id}")
         return
 
     decryptor, _ = crypto_service.get_seekable_decryptor(nonce, start - discard_bytes)
@@ -270,6 +274,8 @@ async def stream_file_chunks(
     first_yield = True
 
     chunk_idx = first_chunk
+    
+    logger.info(f"[telegram_service] Beginning stream loop for msg_id={message_id} from chunk_idx={first_chunk} limit={remaining}")
     async for chunk in client.stream_media(msg, offset=first_chunk, limit=remaining):
         chunk_start = chunk_idx * STREAM_CHUNK_SIZE
         s = max(0, actual_start - chunk_start) if chunk_idx == first_chunk else 0
@@ -279,9 +285,12 @@ async def stream_file_chunks(
             if first_yield:
                 decrypted = decrypted[discard:]
                 first_yield = False
+                logger.info(f"[telegram_service] First yield for msg_id={message_id}: chunk_idx={chunk_idx}, yielded {len(decrypted)} bytes")
             if decrypted:
                 yield decrypted
         chunk_idx += 1
+    
+    logger.info(f"[telegram_service] Stream loop finished for msg_id={message_id}, last chunk_idx was {chunk_idx-1}")
 
 
 # -- Delete -----------------------------------------------------------------

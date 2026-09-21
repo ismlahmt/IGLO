@@ -70,7 +70,11 @@ async def stream_video(
         status_code = 200
 
     end = min(end, file_size - 1)
+    
+    logger.info(f"[stream] msg_id={message_id}, Range={range_header}, start={start}, end={end}, size={file_size}, status={status_code}")
+
     if start > end:
+        logger.error(f"[stream] Invalid range for msg_id={message_id}: start={start} > end={end}")
         raise HTTPException(status_code=416, detail="Range Not Satisfiable")
 
     async def generate():
@@ -78,9 +82,9 @@ async def stream_video(
             async for chunk in telegram_service.stream_file_chunks(message_id, start, end):
                 yield chunk
         except asyncio.CancelledError:
-            pass
+            logger.info(f"[stream] Cancelled msg_id={message_id}")
         except Exception as e:
-            logger.error(f"[stream] Hata — id={message_id}: {e}")
+            logger.error(f"[stream] Error msg_id={message_id}: {e}")
 
     headers = {
         "Accept-Ranges":  "bytes",
@@ -90,6 +94,8 @@ async def stream_video(
     
     if status_code == 206:
         headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+
+    logger.info(f"[stream] Responding msg_id={message_id} with headers: {headers}")
 
     return StreamingResponse(
         generate(),
