@@ -32,14 +32,19 @@ export default function VideoPlayer({ file, onClose }: VideoPlayerProps) {
   const [isBuffering,  setIsBuffering]  = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [srcLoaded,    setSrcLoaded]    = useState(false);
+  const [isPrefetching, setIsPrefetching] = useState(true); // moov chunk'lari yuklenene kadar true
 
   const controlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamUrl     = getStreamUrl(file.message_id);
 
-  // Video oynatıcı açılır açılmaz backend'e ilk chunk'ları ön yükle
+  // Video oynatici acilir acilmaz ilk 3 + son 3 chunk'i bekle (moov atom icin)
   useEffect(() => {
-    prefetchVideo(file.message_id);
+    setIsPrefetching(true);
+    prefetchVideo(file.message_id)
+      .catch(() => {}) // prefetch basarisiz olsa bile devam et
+      .finally(() => setIsPrefetching(false));
   }, [file.message_id]);
+
 
   function formatTime(s: number) {
     if (!s || isNaN(s) || !isFinite(s)) return "0:00";
@@ -51,7 +56,7 @@ export default function VideoPlayer({ file, onClose }: VideoPlayerProps) {
   // ── Play/Pause — user gesture içinde çağrılır (Brave audio fix) ──
   const handlePlayClick = useCallback(() => {
     const v = videoRef.current;
-    if (!v || hasError) return;
+    if (!v || hasError || isPrefetching) return; // prefetch bitene kadar engelle
 
     if (!srcLoaded) {
       // İlk oynatma: src'yi doğrudan set et, ses seviyesini uygula
@@ -91,7 +96,7 @@ export default function VideoPlayer({ file, onClose }: VideoPlayerProps) {
       setPlaying(false);
       setIsBuffering(false);  // pause → spinner'ı gizle
     }
-  }, [streamUrl, hasError, srcLoaded, volume, muted]);
+  }, [streamUrl, hasError, srcLoaded, volume, muted, isPrefetching]);
 
   function scheduleHideControls() {
     if (controlsTimer.current) clearTimeout(controlsTimer.current);
@@ -277,7 +282,8 @@ export default function VideoPlayer({ file, onClose }: VideoPlayerProps) {
                   </div>
                   <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11, marginTop: 2 }}>
                     {(file.size / 1024 / 1024).toFixed(1)} MB
-                    {isBuffering && <span style={{ marginLeft: 8, color: "rgba(99,102,241,0.9)" }}>● Yükleniyor…</span>}
+                    {isPrefetching && <span style={{ marginLeft: 8, color: "rgba(245,158,11,0.9)" }}>⏳ Hazırlanıyor…</span>}
+                    {!isPrefetching && isBuffering && <span style={{ marginLeft: 8, color: "rgba(99,102,241,0.9)" }}>● Yükleniyor…</span>}
                   </div>
                 </div>
               </div>

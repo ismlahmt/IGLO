@@ -17,19 +17,21 @@ async def prefetch_video(
     _: str = Depends(get_current_user_query),
 ):
     """
-    Arka planda indir (fire-and-forget).
+    Video/Ses oynatıcı açılınca çağrılır.
+    1) İlk 3 chunk + son 3 chunk'ı chunk cache'e indir (moov atom için)
+    2) Arka planda tam disk cache başlat
     """
     file = cache_service.get_file(message_id)
     if not file:
         raise HTTPException(status_code=404, detail="Dosya bulunamadı")
 
-    if not disk_cache_service.is_cached(message_id):
-        client = await client_pool.get_cache_client()
-        msg = await client.get_messages(get_settings().telegram_channel_id, message_id)
-        telegram_service._start_caching_task(message_id, client, msg, file, crypto_service)
-        return {"status": "prefetch_started", "message_id": message_id}
-    
-    return {"status": "already_cached", "message_id": message_id}
+    if disk_cache_service.is_cached(message_id):
+        return {"status": "already_cached", "message_id": message_id}
+
+    # Chunk cache'e ilk 3 + son 3 chunk'ı indir (sync - moov atom bekleme süresi ~1-2sn)
+    await telegram_service.prefetch_ends_to_chunk_cache(message_id)
+
+    return {"status": "prefetch_started", "message_id": message_id}
 
 
 @router.get("/{message_id}")

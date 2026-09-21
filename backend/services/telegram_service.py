@@ -231,6 +231,70 @@ def _start_caching_task(message_id: int, client, msg, file_item, crypto_service)
         disk_cache_service.cache_file_from_telegram(message_id, client, msg, file_item, crypto_service)
     )
 
+
+async def prefetch_ends_to_chunk_cache(message_id: int):
+    """
+    Video/ses oynatilmadan once cagrilir.
+    MP4 dosyalarinda moov atom genellikle dosyanin SONUNDA olur (faststart yoksa).
+    Tarayici moov'u bulmak icin dosyanin sonuna atlar - biz bunu onceden chunk cache'e aliyoruz.
+    
+    - Ilk 3 chunk (container header)
+    - Son 3 chunk (moov atom icin)
+    
+    Bu sayede tarayicinin sona atlama istegi aninda cache'den karsilaniyor, Telegram cagrisi olmaz.
+    """
+    global _CURRENT_BG_TASK, _CURRENT_BG_MESSAGE_ID
+
+    # Surekli cakismayi onle: aktif bg task'i iptal et
+    if _CURRENT_BG_TASK and not _CURRENT_BG_TASK.done():
+        _CURRENT_BG_TASK.cancel()
+        _CURRENT_BG_TASK = None
+        _CURRENT_BG_MESSAGE_ID = None
+
+    client = await client_pool.get_download_client()
+    settings = get_settings()
+    file_item = cache_service.get_file(message_id)
+
+    if not file_item:
+        return
+
+    if message_id not in _MSG_CACHE:
+        _MSG_CACHE[message_id] = await client.get_messages(
+            settings.telegram_channel_id, message_id
+        )
+    msg = _MSG_CACHE[message_id]
+
+    # Sifreli dosya boyutu (nonce 16 byte ekli)
+    enc_size = file_item.size + 16
+    total_chunks = max(1, (enc_size + STREAM_CHUNK_SIZE - 1) // STREAM_CHUNK_SIZE)
+
+    # Indirilecek chunk listesi: ilk 3 + son 3 (kucuk dosyalarda overlap olabilir)
+    first_n = min(3, total_chunks)
+    last_n  = min(3, total_chunks)
+    chunks_needed = list(set(
+        list(range(0, first_n)) +
+        list(range(max(0, total_chunks - last_n), total_chunks))
+    ))
+    chunks_to_fetch = [c for c in chunks_needed if _cache_get(message_id, c) is None]
+
+    if not chunks_to_fetch:
+        logger.warning(f"[prefetch] All end-chunks already cached for msg_id={message_id}")
+        return
+
+    logger.warning(f"[prefetch] Fetching end-chunks {chunks_to_fetch} for msg_id={message_id} (total={total_chunks})")
+
+    for chunk_idx in sorted(chunks_to_fetch):
+        try:
+            async for raw_chunk in client.stream_media(msg, offset=chunk_idx, limit=1):
+                _cache_put(message_id, chunk_idx, raw_chunk)
+                logger.warning(f"[prefetch] Cached chunk {chunk_idx} ({len(raw_chunk)} bytes) for msg_id={message_id}")
+                break
+        except Exception as e:
+            logger.error(f"[prefetch] Error fetching chunk {chunk_idx} for msg_id={message_id}: {e}")
+
+    logger.warning(f"[prefetch] End-chunk prefetch complete for msg_id={message_id}")
+
+
 async def stream_file_chunks(
     message_id: int,
     start: int = 0,
