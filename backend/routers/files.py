@@ -56,6 +56,8 @@ async def upload_file(
         )
         return UploadResponse(success=True, file=result, message="Dosya yüklendi")
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Yükleme hatası: {str(e)}")
 
 @router.get("/progress/{upload_id}")

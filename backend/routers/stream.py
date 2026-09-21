@@ -87,6 +87,7 @@ async def stream_video(
         headers={
             "Content-Range":  f"bytes {start}-{end}/{file_size}",
             "Accept-Ranges":  "bytes",
+            "Content-Length": str(end - start + 1),
             "Cache-Control":  "no-cache",
         },
     )
