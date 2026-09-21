@@ -1,12 +1,19 @@
+"""
+Client Pool — Pyrogram bağlantı yönetimi.
+AUTH_KEY_DUPLICATED hatasını önlemek için tek bir paylaşımlı client kullanılır.
+Aynı session string'in birden fazla client'ta kullanılması Telegram tarafından
+aynı auth key'in paralel kullanımı olarak değerlendirilir ve bloke edilir.
+"""
 import os
 from pyrogram import Client
 from config import get_settings
 
-_download_client = None
-_upload_client = None
-_cache_client = None
+# Tek paylaşımlı client — upload, download ve cache için aynısı kullanılır
+_shared_client: Client | None = None
 
-async def _resolve_channel_peer(client, channel_id):
+
+async def _resolve_channel_peer(client: Client, channel_id: int):
+    """Kanalı peer listesine ekle (ilk bağlantıda gerekli)."""
     try:
         async for dialog in client.get_dialogs():
             if dialog.chat.id == channel_id:
@@ -18,83 +25,52 @@ async def _resolve_channel_peer(client, channel_id):
     except Exception:
         pass
 
-async def get_download_client():
-    global _download_client
-    if _download_client is None:
-        settings = get_settings()
-        kwargs = {
-            "name": "iglo_download",
-            "api_id": settings.telegram_api_id,
-            "api_hash": settings.telegram_api_hash,
-            "ipv6": False
-        }
-        if settings.telegram_session_string:
-            kwargs["session_string"] = settings.telegram_session_string
-            kwargs["in_memory"] = True  # Disk'e .session dosyası yazma (AUTH_KEY_DUPLICATED önlenir)
-        
-        _download_client = Client(**kwargs)
-        await _download_client.start()
-        
-        # Resolve peer on first start if channel_id is available
-        if hasattr(settings, 'telegram_channel_id') and settings.telegram_channel_id:
-            await _resolve_channel_peer(_download_client, settings.telegram_channel_id)
-            
-    return _download_client
 
-async def get_upload_client():
-    global _upload_client
-    if _upload_client is None:
-        settings = get_settings()
-        kwargs = {
-            "name": "iglo_upload",
-            "api_id": settings.telegram_api_id,
-            "api_hash": settings.telegram_api_hash,
-            "ipv6": False
-        }
-        if settings.telegram_session_string:
-            kwargs["session_string"] = settings.telegram_session_string
-            kwargs["in_memory"] = True  # Disk'e .session dosyası yazma (AUTH_KEY_DUPLICATED önlenir)
-            
-        _upload_client = Client(**kwargs)
-        await _upload_client.start()
-        
-        # Resolve peer on first start if channel_id is available
-        if hasattr(settings, 'telegram_channel_id') and settings.telegram_channel_id:
-            await _resolve_channel_peer(_upload_client, settings.telegram_channel_id)
-            
-    return _upload_client
+async def _get_client() -> Client:
+    """Tek paylaşımlı Pyrogram client'ını başlat ve döndür."""
+    global _shared_client
+    if _shared_client is not None and _shared_client.is_connected:
+        return _shared_client
 
-async def get_cache_client():
-    global _cache_client
-    if _cache_client is None:
-        settings = get_settings()
-        kwargs = {
-            "name": "iglo_cache",
-            "api_id": settings.telegram_api_id,
-            "api_hash": settings.telegram_api_hash,
-            "ipv6": False
-        }
-        if settings.telegram_session_string:
-            kwargs["session_string"] = settings.telegram_session_string
-            kwargs["in_memory"] = True  # Disk'e .session dosyası yazma (AUTH_KEY_DUPLICATED önlenir)
-            
-        _cache_client = Client(**kwargs)
-        await _cache_client.start()
-        
-        # Resolve peer on first start if channel_id is available
-        if hasattr(settings, 'telegram_channel_id') and settings.telegram_channel_id:
-            await _resolve_channel_peer(_cache_client, settings.telegram_channel_id)
-            
-    return _cache_client
+    settings = get_settings()
+    kwargs = {
+        "name": "iglo",
+        "api_id": settings.telegram_api_id,
+        "api_hash": settings.telegram_api_hash,
+        "ipv6": False,
+    }
+
+    if settings.telegram_session_string:
+        kwargs["session_string"] = settings.telegram_session_string
+        kwargs["in_memory"] = True  # Disk'e .session dosyası yazma
+
+    _shared_client = Client(**kwargs)
+    await _shared_client.start()
+
+    if settings.telegram_channel_id:
+        await _resolve_channel_peer(_shared_client, settings.telegram_channel_id)
+
+    return _shared_client
+
+
+# Eski arayüz — geriye dönük uyumluluk için aynı isimler korundu
+async def get_download_client() -> Client:
+    return await _get_client()
+
+
+async def get_upload_client() -> Client:
+    return await _get_client()
+
+
+async def get_cache_client() -> Client:
+    return await _get_client()
+
 
 async def shutdown_all():
-    global _download_client, _upload_client, _cache_client
-    if _download_client is not None:
-        await _download_client.stop()
-        _download_client = None
-    if _upload_client is not None:
-        await _upload_client.stop()
-        _upload_client = None
-    if _cache_client is not None:
-        await _cache_client.stop()
-        _cache_client = None
+    global _shared_client
+    if _shared_client is not None:
+        try:
+            await _shared_client.stop()
+        except Exception:
+            pass
+        _shared_client = None
