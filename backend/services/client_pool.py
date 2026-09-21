@@ -30,6 +30,7 @@ async def get_download_client():
         }
         if settings.telegram_session_string:
             kwargs["session_string"] = settings.telegram_session_string
+            kwargs["in_memory"] = True  # Disk'e .session dosyası yazma (AUTH_KEY_DUPLICATED önlenir)
         
         _download_client = Client(**kwargs)
         await _download_client.start()
@@ -52,6 +53,7 @@ async def get_upload_client():
         }
         if settings.telegram_session_string:
             kwargs["session_string"] = settings.telegram_session_string
+            kwargs["in_memory"] = True  # Disk'e .session dosyası yazma (AUTH_KEY_DUPLICATED önlenir)
             
         _upload_client = Client(**kwargs)
         await _upload_client.start()
@@ -74,6 +76,7 @@ async def get_cache_client():
         }
         if settings.telegram_session_string:
             kwargs["session_string"] = settings.telegram_session_string
+            kwargs["in_memory"] = True  # Disk'e .session dosyası yazma (AUTH_KEY_DUPLICATED önlenir)
             
         _cache_client = Client(**kwargs)
         await _cache_client.start()
