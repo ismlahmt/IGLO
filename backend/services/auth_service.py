@@ -28,6 +28,9 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
 def authenticate_user(username: str, password: str) -> bool:
     settings = get_settings()
+    if not settings.admin_password or not settings.jwt_secret:
+        # .env ayarlanmamış — güvenlik için girişi engelle
+        return False
     if username != settings.admin_username:
         return False
     # Direkt şifre karşılaştırması (production'da hash kullan)

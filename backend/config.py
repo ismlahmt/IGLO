@@ -13,8 +13,8 @@ class Settings(BaseSettings):
 
     # Güvenlik
     admin_username: str = "admin"
-    admin_password: str = "changeme123"
-    jwt_secret: str = "change_this_secret"
+    admin_password: str = ""  # .env'de ADMIN_PASSWORD zorunlu
+    jwt_secret: str = ""      # .env'de JWT_SECRET zorunlu
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24  # 24 saat
     encryption_key: str = ""
