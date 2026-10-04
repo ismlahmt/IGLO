@@ -91,18 +91,28 @@ async def download_file(
     if not file:
         raise HTTPException(status_code=404, detail="Dosya bulunamadı")
 
-    try:
-        data = await telegram_service.download_file_bytes(message_id)
-        return StreamingResponse(
-            io.BytesIO(data),
-            media_type=file.mime_type,
-            headers={
-                "Content-Disposition": f'attachment; filename="{file.name}"',
-                "Content-Length": str(len(data)),
-            },
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"İndirme hatası: {str(e)}")
+    from urllib.parse import quote
+
+    async def body():
+        gen = telegram_service.stream_file_chunks(message_id, 0, max(file.size - 1, 0))
+        try:
+            async for chunk in gen:
+                yield chunk
+        finally:
+            await gen.aclose()
+
+    ascii_name = file.name.encode("ascii", "ignore").decode() or "download"
+    ascii_name = ascii_name.replace('"', "'")
+    return StreamingResponse(
+        body(),
+        media_type=file.mime_type,
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(file.name)}"
+            ),
+            "Content-Length": str(file.size),
+        },
+    )
 
 
 

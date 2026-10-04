@@ -39,6 +39,20 @@ VIDEO_EXTS = {"mp4", "mkv", "avi", "mov", "webm", "m4v", "flv", "wmv", "ts", "m2
 # "Fast start" MP4 ve MKV dosyaları için yeterlidir.
 THUMB_PREFETCH_BYTES = 8 * 1024 * 1024
 
+# Ayni anda en fazla N ffmpeg: thumbnail'lar video oynatmayla Telegram bant
+# genisligi icin yarismasin.
+_THUMB_SEM: asyncio.Semaphore | None = None
+# Uretilemeyen thumbnail'lari kisa sure tekrar deneme (message_id -> zaman)
+_THUMB_FAILED: dict[int, float] = {}
+_THUMB_RETRY_AFTER = 600  # sn
+
+
+def _thumb_sem() -> asyncio.Semaphore:
+    global _THUMB_SEM
+    if _THUMB_SEM is None:
+        _THUMB_SEM = asyncio.Semaphore(2)
+    return _THUMB_SEM
+
 
 def _get_ffmpeg() -> str | None:
     """
@@ -81,11 +95,19 @@ async def _generate_thumbnail(message_id: int, thumb_path: Path, token: str) -> 
     port = os.environ.get("PORT", settings.backend_port)
     stream_url = f"http://127.0.0.1:{port}/api/stream/{message_id}?token={token}"
 
+    import time
+    failed_at = _THUMB_FAILED.get(message_id)
+    if failed_at and time.time() - failed_at < _THUMB_RETRY_AFTER:
+        return False
+
     try:
-        loop = asyncio.get_event_loop()
-        success = await loop.run_in_executor(
-            None, _run_ffmpeg, ffmpeg, stream_url, str(thumb_path)
-        )
+        async with _thumb_sem():
+            loop = asyncio.get_event_loop()
+            success = await loop.run_in_executor(
+                None, _run_ffmpeg, ffmpeg, stream_url, str(thumb_path)
+            )
+        if not success:
+            _THUMB_FAILED[message_id] = time.time()
         return success
     except Exception as e:
         print(f"[thumbnail] Genel hata #{message_id}: {e}")
@@ -103,8 +125,8 @@ def _run_ffmpeg(ffmpeg: str, input_url: str, output_path: str) -> bool:
                 [
                     ffmpeg,
                     "-loglevel", "error",
+                    *extra_args,                # -ss GIRDIDEN ONCE: hizli (input) seek
                     "-i", input_url,
-                    *extra_args,
                     "-vframes", "1",
                     "-vf", "scale=480:-2",      # 480px genişlik, oran korunur
                     "-q:v", "3",                # JPEG kalitesi (1=en iyi, 31=en kötü)
