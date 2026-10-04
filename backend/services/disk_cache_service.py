@@ -1,178 +1,223 @@
-import os
+"""
+Disk chunk cache.
+
+Her video icin `<CACHE_DIR>/<message_id>/<chunk_idx>` seklinde 1MB'lik, Telegram'dan
+geldigi haliyle (SIFRELI) chunk dosyalari tutulur. Boylece:
+  - Sunucu diskinde duz metin video bulunmaz (sifreleme korunur),
+  - Dosyanin ortasina/sonuna atlayinca bile sadece gereken chunk'lar iner,
+    "sparse file" / Windows sifir-doldurma sorunu yoktur,
+  - Yazma atomiktir (tmp + rename), yarim chunk asla okunmaz,
+  - Bir kez izlenen kisimlar bir daha Telegram'a gitmeden diskten gelir.
+
+Eski surumun tam (duz metin) `<id>.dat` dosyalari varsa onlar da hala servis edilir.
+"""
 import asyncio
+import os
+import shutil
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
-# Cache directory - configurable via env var
-CACHE_DIR = os.environ.get("IGLO_CACHE_DIR", "/var/cache/iglo")
+
+def _default_cache_dir() -> str:
+    env = os.environ.get("IGLO_CACHE_DIR")
+    if env:
+        return env
+    if os.name == "posix":
+        return "/var/cache/iglo"
+    return str(Path(__file__).resolve().parent.parent / "media_cache")
+
+
+CACHE_DIR = _default_cache_dir()
 MAX_CACHE_GB = int(os.environ.get("IGLO_MAX_CACHE_GB", "150"))
+MAX_CACHE_BYTES = MAX_CACHE_GB * 1024 * 1024 * 1024
 
-# Ensure cache directory exists
-os.makedirs(CACHE_DIR, exist_ok=True)
+try:
+    os.makedirs(CACHE_DIR, exist_ok=True)
+except OSError:
+    # /var/cache/iglo yazilamiyorsa proje altina dus
+    CACHE_DIR = str(Path(__file__).resolve().parent.parent / "media_cache")
+    os.makedirs(CACHE_DIR, exist_ok=True)
 
-# Track files currently being cached (prevent duplicate downloads)
-_caching_locks: dict[int, asyncio.Lock] = {}
-_caching_done: set[int] = set()
+# Disk I/O event loop'u bloklamasin diye ayri thread havuzu
+_io_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="iglo-io")
+
+_lock = threading.Lock()
+# ("dir" | "dat", message_id) -> [size_bytes, last_access]
+_entries: dict[tuple[str, int], list] = {}
+_total_bytes = 0
+_last_evict = 0.0
+
+
+# ── Yol yardimcilari ─────────────────────────────────────────────────────────
+
+def _dir_path(message_id: int) -> str:
+    return os.path.join(CACHE_DIR, str(message_id))
+
+
+def _chunk_path(message_id: int, idx: int) -> str:
+    return os.path.join(CACHE_DIR, str(message_id), str(idx))
+
 
 def get_path(message_id: int) -> str:
-    """Cache file path: /var/cache/iglo/14.dat"""
+    """Eski tam-dosya (duz metin) cache yolu."""
     return os.path.join(CACHE_DIR, f"{message_id}.dat")
 
+
 def is_cached(message_id: int) -> bool:
-    """Check if file is fully cached on disk."""
-    return message_id in _caching_done or os.path.exists(get_path(message_id))
+    """Eski surumden kalan, tamamen inmis duz metin dosya var mi?"""
+    return os.path.exists(get_path(message_id))
+
 
 def touch(message_id: int):
-    """Update access time for LRU tracking."""
-    path = get_path(message_id)
-    if os.path.exists(path):
-        os.utime(path)
+    now = time.time()
+    with _lock:
+        for kind in ("dir", "dat"):
+            e = _entries.get((kind, message_id))
+            if e:
+                e[1] = now
+
+
+# ── Chunk okuma / yazma ──────────────────────────────────────────────────────
+
+def _read_chunk_sync(message_id: int, idx: int, expected: int) -> Optional[bytes]:
+    try:
+        with open(_chunk_path(message_id, idx), "rb") as f:
+            data = f.read()
+    except OSError:
+        return None
+    if expected and len(data) != expected:
+        return None
+    return data
+
+
+def _write_chunk_sync(message_id: int, idx: int, data: bytes):
+    global _total_bytes
+    d = _dir_path(message_id)
+    path = _chunk_path(message_id, idx)
+    tmp = f"{path}.{threading.get_ident()}.tmp"
+    try:
+        os.makedirs(d, exist_ok=True)
+        with open(tmp, "wb") as f:
+            f.write(data)
+        replaced = os.path.exists(path)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return  # cache yazilamazsa sessizce gec; oynatma etkilenmesin
+
+    with _lock:
+        e = _entries.setdefault(("dir", message_id), [0, time.time()])
+        if not replaced:
+            e[0] += len(data)
+            _total_bytes += len(data)
+        e[1] = time.time()
+
+    _maybe_evict_sync()
+
+
+async def read_chunk(message_id: int, idx: int, expected: int = 0) -> Optional[bytes]:
+    loop = asyncio.get_running_loop()
+    data = await loop.run_in_executor(_io_pool, _read_chunk_sync, message_id, idx, expected)
+    if data is not None:
+        touch(message_id)
+    return data
+
+
+async def write_chunk(message_id: int, idx: int, data: bytes):
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(_io_pool, _write_chunk_sync, message_id, idx, data)
+
+
+# ── Silme / tahliye ──────────────────────────────────────────────────────────
 
 def remove(message_id: int):
-    """Remove cached file (on delete)."""
-    path = get_path(message_id)
-    if os.path.exists(path):
-        os.remove(path)
-    _caching_done.discard(message_id)
-    _caching_locks.pop(message_id, None)
+    """Dosya silinince tum cache'ini kaldir."""
+    global _total_bytes
+    shutil.rmtree(_dir_path(message_id), ignore_errors=True)
+    try:
+        os.remove(get_path(message_id))
+    except OSError:
+        pass
+    with _lock:
+        for kind in ("dir", "dat"):
+            e = _entries.pop((kind, message_id), None)
+            if e:
+                _total_bytes -= e[0]
+
 
 def get_cache_size_bytes() -> int:
-    """Total size of all cached files."""
-    total = 0
-    try:
-        for f in os.listdir(CACHE_DIR):
-            fp = os.path.join(CACHE_DIR, f)
-            if os.path.isfile(fp):
-                total += os.path.getsize(fp)
-    except OSError:
-        pass
-    return total
+    return _total_bytes
 
-async def evict_if_needed():
-    """Delete oldest cached files if cache exceeds MAX_CACHE_GB."""
-    max_bytes = MAX_CACHE_GB * 1024 * 1024 * 1024
-    if get_cache_size_bytes() <= max_bytes:
+
+def _maybe_evict_sync():
+    """Limit asilirsa en az kullanilan videolari (LRU) sil. En fazla 15 sn'de bir calisir."""
+    global _total_bytes, _last_evict
+    if _total_bytes <= MAX_CACHE_BYTES:
         return
-    
-    files = []
-    try:
-        for f in os.listdir(CACHE_DIR):
-            fp = os.path.join(CACHE_DIR, f)
-            if os.path.isfile(fp):
-                stat = os.stat(fp)
-                files.append((fp, stat.st_atime, stat.st_size))
-    except OSError:
+    now = time.time()
+    if now - _last_evict < 15:
         return
-    
-    # Sort by access time (oldest first)
-    files.sort(key=lambda x: x[1])
-    
-    current_size = sum(f[2] for f in files)
-    for fp, _, size in files:
-        if current_size <= max_bytes:
+    _last_evict = now
+
+    target = int(MAX_CACHE_BYTES * 0.9)
+    with _lock:
+        order = sorted(_entries.items(), key=lambda kv: kv[1][1])
+
+    for (kind, mid), (size, _) in order:
+        if _total_bytes <= target:
             break
-        try:
-            os.remove(fp)
-            current_size -= size
-            # Also clean _caching_done
+        if kind == "dir":
+            shutil.rmtree(_dir_path(mid), ignore_errors=True)
+        else:
             try:
-                mid = int(os.path.basename(fp).replace('.dat', ''))
-                _caching_done.discard(mid)
-            except ValueError:
+                os.remove(get_path(mid))
+            except OSError:
                 pass
-        except OSError:
-            continue
+        with _lock:
+            e = _entries.pop((kind, mid), None)
+            if e:
+                _total_bytes -= e[0]
 
-async def cache_file_from_telegram(message_id: int, download_client, msg, file_item, crypto_service) -> str:
-    """
-    Download file from Telegram, decrypt, write to disk.
-    Uses asyncio.Lock to prevent duplicate downloads.
-    Returns the cached file path.
-    """
-    path = get_path(message_id)
-    
-    # Already cached?
-    if message_id in _caching_done and os.path.exists(path):
-        touch(message_id)
-        return path
-    
-    # Get or create lock for this file
-    if message_id not in _caching_locks:
-        _caching_locks[message_id] = asyncio.Lock()
-    
-    async with _caching_locks[message_id]:
-        # Double-check after acquiring lock
-        if message_id in _caching_done and os.path.exists(path):
-            return path
-        
-        try:
-            # Download and decrypt chunk by chunk to avoid OOM
-            tmp_path = path + ".tmp"
-            
-            # Setup streaming decryptor if encrypted
-            decryptor = None
-            nonce = None
-            is_encrypted = file_item and file_item.encrypted
-            
-            with open(tmp_path, 'wb') as f:
-                async for chunk in download_client.stream_media(msg):
-                    if not chunk:
-                        continue
-                        
-                    if is_encrypted:
-                        if nonce is None:
-                            # First block contains nonce
-                            if len(chunk) >= 16:
-                                nonce = chunk[:16]
-                                decryptor, _ = crypto_service.get_seekable_decryptor(nonce, 0)
-                                decrypted = decryptor.update(chunk[16:])
-                                if decrypted:
-                                    f.write(decrypted)
-                            else:
-                                # Edge case: first chunk smaller than 16 bytes (highly unlikely)
-                                pass
-                        else:
-                            decrypted = decryptor.update(chunk)
-                            if decrypted:
-                                f.write(decrypted)
-                    else:
-                        f.write(chunk)
-            
-            os.replace(tmp_path, path)  # Atomic rename
-            
-            _caching_done.add(message_id)
-            _caching_locks.pop(message_id, None)
-            
-            # Evict old files if needed
-            await evict_if_needed()
-            
-            return path
-        except asyncio.CancelledError:
-            # Cleanup partial file
-            for p in [path + '.tmp', path]:
-                if os.path.exists(p):
-                    os.remove(p)
-            raise
-        except Exception as e:
-            print(f'[disk_cache] Error caching #{message_id}: {e}')
-            # Cleanup
-            for p in [path + '.tmp']:
-                if os.path.exists(p):
-                    os.remove(p)
-            raise
 
 def init_cache():
-    """Startup: scan existing cache files and populate _caching_done set."""
+    """Acilista mevcut cache'i tara (boyut + son erisim zamani)."""
+    global _total_bytes
+    total = 0
     try:
-        for f in os.listdir(CACHE_DIR):
-            if f.endswith('.dat'):
+        with os.scandir(CACHE_DIR) as it:
+            for ent in it:
                 try:
-                    mid = int(f.replace('.dat', ''))
-                    _caching_done.add(mid)
-                except ValueError:
-                    pass
+                    if ent.is_dir() and ent.name.isdigit():
+                        size = 0
+                        with os.scandir(ent.path) as sub:
+                            for c in sub:
+                                if c.name.endswith(".tmp"):
+                                    try:
+                                        os.remove(c.path)
+                                    except OSError:
+                                        pass
+                                    continue
+                                size += c.stat().st_size
+                        _entries[("dir", int(ent.name))] = [size, ent.stat().st_mtime]
+                        total += size
+                    elif ent.is_file() and ent.name.endswith(".dat"):
+                        mid = int(ent.name[:-4])
+                        st = ent.stat()
+                        _entries[("dat", mid)] = [st.st_size, st.st_atime]
+                        total += st.st_size
+                    elif ent.is_file() and ent.name.endswith(".tmp"):
+                        os.remove(ent.path)
+                except (OSError, ValueError):
+                    continue
     except OSError:
         pass
+    _total_bytes = total
 
-# Initialize on import
+
 init_cache()

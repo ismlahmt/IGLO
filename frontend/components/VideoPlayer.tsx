@@ -37,7 +37,8 @@ export default function VideoPlayer({ file, onClose }: VideoPlayerProps) {
   const controlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamUrl     = getStreamUrl(file.message_id);
 
-  // Video oynatici acilir acilmaz ilk 3 + son 3 chunk'i bekle (moov atom icin)
+  // Oynatici acilir acilmaz arka planda ilk/son chunk'lari isit (moov atom icin).
+  // Backend aninda doner; oynatma bunu BEKLEMEZ.
   useEffect(() => {
     setIsPrefetching(true);
     prefetchVideo(file.message_id)
@@ -56,7 +57,7 @@ export default function VideoPlayer({ file, onClose }: VideoPlayerProps) {
   // ── Play/Pause — user gesture içinde çağrılır (Brave audio fix) ──
   const handlePlayClick = useCallback(() => {
     const v = videoRef.current;
-    if (!v || hasError || isPrefetching) return; // prefetch bitene kadar engelle
+    if (!v || hasError) return;
 
     if (!srcLoaded) {
       // İlk oynatma: src'yi doğrudan set et, ses seviyesini uygula
@@ -96,7 +97,7 @@ export default function VideoPlayer({ file, onClose }: VideoPlayerProps) {
       setPlaying(false);
       setIsBuffering(false);  // pause → spinner'ı gizle
     }
-  }, [streamUrl, hasError, srcLoaded, volume, muted, isPrefetching]);
+  }, [streamUrl, hasError, srcLoaded, volume, muted]);
 
   function scheduleHideControls() {
     if (controlsTimer.current) clearTimeout(controlsTimer.current);
@@ -330,7 +331,7 @@ export default function VideoPlayer({ file, onClose }: VideoPlayerProps) {
             <video
               ref={videoRef}
               onClick={handlePlayClick}
-              preload="none"
+              preload="metadata"
               playsInline
               style={{ width: "100%", height: "100%", objectFit: "contain", cursor: "pointer" }}
             />
